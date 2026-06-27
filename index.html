@@ -4,18 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BusPartsManager — Gestion Pièces de Rechange</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#0B2545">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="BusParts">
-<script>
-  if('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('service-worker.js');
-    });
-  }
-</script>
 <!-- Firebase SDK (v10 ESM) -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -3292,41 +3280,68 @@ function populateUserMagasinSelect(selected) {
   }).join('');
 }
 
-function saveUser() {
+async function saveUser() {
   const matricule = document.getElementById('user-matricule').value.replace(/[^0-9]/g,'');
   const pass = document.getElementById('user-pass').value.trim();
   const name = document.getElementById('user-name').value.trim();
+  const email = document.getElementById('user-email').value.trim();
   const errEl = document.getElementById('user-matricule-error');
   errEl.style.display = 'none';
 
-  if(!pass || !name) { alert('Veuillez remplir tous les champs obligatoires.'); return; }
+  if(!name) { alert('Veuillez saisir le nom complet.'); return; }
   if(matricule.length !== 5) {
     errEl.textContent = `⚠️ Le matricule doit comporter exactement 5 chiffres (${matricule.length}/5 saisi).`;
     errEl.style.display = 'block';
     document.getElementById('user-matricule').focus();
     return;
   }
+  if(!editingUserId && !email) { alert('Veuillez saisir un email.'); return; }
+  if(!editingUserId && !pass) { alert('Veuillez saisir un mot de passe.'); return; }
+
   const role = document.getElementById('user-role').value;
   const defaultPerms = {
     admin: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile','admin','settings'],
     magasinier: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile'],
     agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile']
   };
-  const data = { login: matricule, pass, name, matricule, tel: document.getElementById('user-tel').value.trim(), email: document.getElementById('user-email').value.trim(), role, magasin: document.getElementById('user-magasin').value, perms: defaultPerms[role] || [] };
+  const data = { login: matricule, name, matricule, tel: document.getElementById('user-tel').value.trim(), email, role, magasin: document.getElementById('user-magasin').value, perms: defaultPerms[role] || [] };
+
   if(editingUserId) {
+    // Modification d'un utilisateur existant
     const idx = DB.users.findIndex(u => u.id === editingUserId);
     const dup = DB.users.find(u => (u.login === matricule || u.matricule === matricule) && u.id !== editingUserId);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    // Préserver le statut existant (ne pas valider automatiquement un compte en attente)
     DB.users[idx] = { ...DB.users[idx], ...data };
+    save();
+    closeModal('modal-add-user');
+    renderAdmin();
+    showNotif('✅', 'Utilisateur modifié', `${name} a été mis à jour`);
   } else {
+    // Nouvel utilisateur → créer sur Firebase
     const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+
+    const saveBtn = document.querySelector('#modal-add-user .btn-primary');
+    if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Création en cours...'; }
+
+    try {
+      await window.fbCreateUser(email, pass);
+      DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+      save();
+      closeModal('modal-add-user');
+      renderAdmin();
+      showNotif('✅', 'Utilisateur créé', `${name} peut maintenant se connecter avec son email et mot de passe`);
+    } catch(e) {
+      let msg = 'Erreur lors de la création du compte.';
+      if(e.code === 'auth/email-already-in-use') msg = '🚫 Cet email est déjà utilisé sur Firebase.';
+      if(e.code === 'auth/invalid-email') msg = '🚫 Email invalide.';
+      if(e.code === 'auth/weak-password') msg = '🚫 Mot de passe trop court (minimum 6 caractères).';
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    } finally {
+      if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
+    }
   }
-  save();
-  closeModal('modal-add-user');
-  renderAdmin();
 }
 
 function validateUser(id) {
