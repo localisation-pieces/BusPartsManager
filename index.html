@@ -845,6 +845,7 @@
 
       <!-- ADMIN -->
       <div class="view" id="view-admin">
+        <div id="admin-doublons-alert" style="display:none"></div>
         <div class="admin-section" id="pending-users-section" style="display:none;border:2px solid var(--warning)">
           <div class="admin-section-header" style="background:var(--warning-light);color:var(--warning)">
             ⏳ Demandes d'inscription en attente
@@ -1671,6 +1672,36 @@ function validateMatriculeInput(input, errId) {
   if(errEl) errEl.style.display = 'none';
 }
 
+// ── Contrôle anti-doublon matricule ──────────────────────────────────────────
+// Retourne l'utilisateur en conflit, ou null si le matricule est libre.
+// excludeId : ID à exclure lors d'une modification (évite de se bloquer soi-même).
+function matriculeConflict(matricule, excludeId) {
+  const mat = String(matricule).trim();
+  return DB.users.find(u =>
+    (u.login === mat || u.matricule === mat) &&
+    (!excludeId || u.id !== excludeId)
+  ) || null;
+}
+
+// Audit complet : renvoie les groupes de doublons détectés dans DB.users
+function auditMatriculeDoublons() {
+  const seen = {};
+  const doublons = [];
+  DB.users.forEach(u => {
+    const mat = u.matricule || u.login || '';
+    if (!mat) return;
+    if (seen[mat]) {
+      let grp = doublons.find(d => d.matricule === mat);
+      if (!grp) { grp = { matricule: mat, users: [seen[mat]] }; doublons.push(grp); }
+      grp.users.push(u);
+    } else {
+      seen[mat] = u;
+    }
+  });
+  return doublons;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function doSignup() {
   const prenom = document.getElementById('su-prenom').value.trim();
   const nom = document.getElementById('su-nom').value.trim();
@@ -1704,9 +1735,11 @@ async function doSignup() {
     errEl.style.display = 'block';
     return;
   }
-  if(DB.users.find(u => u.login === matricule || u.matricule === matricule)) {
-    errEl.textContent = `🚫 Le matricule ${matricule} est déjà associé à un compte existant.`;
+  const conflictSignup = matriculeConflict(matricule, null);
+  if(conflictSignup) {
+    errEl.textContent = `🚫 Le matricule ${matricule} est déjà associé au compte de ${conflictSignup.name}. Un seul compte par matricule est autorisé.`;
     errEl.style.display = 'block';
+    document.getElementById('su-matricule').focus();
     return;
   }
 
@@ -3244,6 +3277,31 @@ const PAGE_LABELS = {
 };
 
 function renderAdmin() {
+  // ── Audit doublons matricule ──────────────────────────────────────────────
+  const doublonsAlertEl = document.getElementById('admin-doublons-alert');
+  if(doublonsAlertEl) {
+    const doublons = auditMatriculeDoublons();
+    if(doublons.length) {
+      doublonsAlertEl.style.display = 'block';
+      doublonsAlertEl.innerHTML = `
+        <div style="background:var(--danger-light);border:1.5px solid var(--danger);border-radius:var(--radius);padding:14px 18px;margin-bottom:18px">
+          <div style="font-weight:700;color:var(--danger);font-size:14px;margin-bottom:8px">
+            ⚠️ ${doublons.length} doublon(s) de matricule détecté(s) — À corriger impérativement
+          </div>
+          ${doublons.map(d => `
+            <div style="font-size:13px;margin-bottom:6px;padding:8px 12px;background:white;border-radius:6px;border-left:3px solid var(--danger)">
+              Matricule <strong style="font-family:var(--font-mono)">#${d.matricule}</strong> utilisé par :
+              ${d.users.map(u => `<span style="margin-left:8px;padding:2px 8px;background:var(--danger-light);border-radius:4px">${u.name}</span>`).join('')}
+              &nbsp;<small style="color:var(--text3)">(modifiez ou supprimez les comptes en double via ✏️ ci-dessous)</small>
+            </div>`).join('')}
+        </div>`;
+    } else {
+      doublonsAlertEl.style.display = 'none';
+      doublonsAlertEl.innerHTML = '';
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   // Section demandes en attente
   const pending = DB.users.filter(u => u.statut === 'en_attente');
   const pendingSection = document.getElementById('pending-users-section');
@@ -3387,8 +3445,8 @@ async function saveUser() {
   if(editingUserId) {
     // Modification d'un utilisateur existant
     const idx = DB.users.findIndex(u => u.id === editingUserId);
-    const dup = DB.users.find(u => (u.login === matricule || u.matricule === matricule) && u.id !== editingUserId);
-    if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
+    const dup = matriculeConflict(matricule, editingUserId);
+    if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}. Un seul compte par matricule est autorisé.`; errEl.style.display = 'block'; return; }
     DB.users[idx] = { ...DB.users[idx], ...data };
     save();
     closeModal('modal-add-user');
@@ -3396,8 +3454,8 @@ async function saveUser() {
     showNotif('✅', 'Utilisateur modifié', `${name} a été mis à jour`);
   } else {
     // Nouvel utilisateur → créer sur Firebase
-    const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
-    if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
+    const dup = matriculeConflict(matricule, null);
+    if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}. Un seul compte par matricule est autorisé.`; errEl.style.display = 'block'; return; }
 
     const saveBtn = document.querySelector('#modal-add-user .btn-primary');
     if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Création en cours...'; }
