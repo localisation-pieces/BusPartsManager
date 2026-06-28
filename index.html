@@ -1533,10 +1533,10 @@ async function load() {
   loadingDiv.innerHTML = '<div style="font-size:42px">🚌</div><div style="font-size:16px;font-weight:600;font-family:var(--font-display)">BusPartsManager</div><div style="font-size:13px;opacity:0.6">Connexion à la base de données…</div>';
   document.body.appendChild(loadingDiv);
 
-  // Attendre que Firebase soit prêt (max 8s)
+  // Attendre que Firebase soit prêt (max 3s)
   if(!window._firebaseReady) {
     await new Promise(resolve => {
-      const t = setTimeout(resolve, 8000);
+      const t = setTimeout(resolve, 3000);
       document.addEventListener('firebase-ready', () => { clearTimeout(t); resolve(); }, { once: true });
     });
   }
@@ -1547,7 +1547,7 @@ async function load() {
     try {
       parsed = await Promise.race([
         window.fbLoad(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 6000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
       ]);
     } catch(e) {
       console.warn('Firebase indisponible, bascule sur localStorage:', e.message);
@@ -1592,8 +1592,8 @@ async function load() {
     }
   }
 
-  // Activer l'écoute temps réel après le chargement initial
-  if(window.fbListen) window.fbListen();
+  // Activer l'écoute temps réel après le chargement initial (uniquement si en ligne)
+  try { if(window.fbListen) window.fbListen(); } catch(e) {}
 
   // Retirer l'écran de chargement
   loadingDiv.remove();
