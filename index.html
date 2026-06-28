@@ -1412,6 +1412,8 @@ let photoDataUrl = '';
 
 function save() {
   try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
+  // Sync Firebase si disponible
+  try { if(window.fbSave) window.fbSave(JSON.parse(JSON.stringify(DB))); } catch(e){}
 }
 
 function saveCart() {
@@ -4927,10 +4929,96 @@ function exportJournalExcel() {
 // Login on Enter
 document.getElementById('login-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
+// Firebase ready promise — résolu quand Firebase est initialisé
+window.fbReady = new Promise(resolve => { window._fbReadyResolve = resolve; });
+
 // INIT
 load();
+// Firebase sync (si disponible)
+if(window.fbReady) {
+  window.fbReady.then(() => {
+    if(window.fbLoad) {
+      window.fbLoad().then(r => {
+        if(r && r.users && r.users.length) {
+          if(r.articles) DB.articles = r.articles;
+          if(r.orders) DB.orders = r.orders;
+          if(r.kits) DB.kits = r.kits;
+          if(r.tools) DB.tools = r.tools;
+          if(r.loans) DB.loans = r.loans;
+          if(r.notifications) DB.notifications = r.notifications;
+          if(r.activity) DB.activity = r.activity;
+          if(r.messages) DB.messages = r.messages;
+          if(r.settings) DB.settings = r.settings;
+          if(r.users) DB.users = r.users;
+          try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
+        }
+      }).catch(() => {});
+    }
+    if(window.fbListen) {
+      window.fbListen(r => {
+        if(!r || !r.users || !r.users.length) return;
+        if(r.articles) DB.articles = r.articles;
+        if(r.orders) DB.orders = r.orders;
+        if(r.kits) DB.kits = r.kits;
+        if(r.tools) DB.tools = r.tools;
+        if(r.loans) DB.loans = r.loans;
+        if(r.notifications) DB.notifications = r.notifications;
+        if(r.activity) DB.activity = r.activity;
+        if(r.messages) DB.messages = r.messages;
+        if(r.settings) DB.settings = r.settings;
+        if(r.users) DB.users = r.users;
+        try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
+        if(window.currentUser && window.currentViewId) {
+          try { window.refreshCurrentView && window.refreshCurrentView(); } catch(_){}
+          try { window.updateBadges && window.updateBadges(); } catch(_){}
+        }
+      });
+    }
+  }).catch(() => {});
+}
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script type="module">
+// Firebase — chargé en dernier, ne bloque jamais l'affichage
+try {
+  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  const { getFirestore, doc, setDoc, getDoc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyD7LxL8v6KnJGTGm9nRlBN4tL5724WFdsQ",
+    authDomain: "buspartsmanager-13971.firebaseapp.com",
+    projectId: "buspartsmanager-13971",
+    storageBucket: "buspartsmanager-13971.appspot.com",
+    messagingSenderId: "749286772337",
+    appId: "1:749286772337:web:abc123"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const fsdb = getFirestore(app);
+  const DB_REF = doc(fsdb, 'bpm', 'database');
+
+  window.fbSave = async (data) => {
+    try { await setDoc(DB_REF, data, { merge: false }); } catch(e) {}
+  };
+
+  window.fbLoad = async () => {
+    try { const s = await getDoc(DB_REF); if(s.exists()) return s.data(); } catch(e) {}
+    return null;
+  };
+
+  window.fbListen = (cb) => {
+    onSnapshot(DB_REF, snap => {
+      if(snap.exists()) cb(snap.data());
+    });
+  };
+
+  // Signaler que Firebase est prêt
+  if(window._fbReadyResolve) window._fbReadyResolve();
+} catch(e) {
+  console.warn('Firebase non disponible:', e.message);
+  if(window._fbReadyResolve) window._fbReadyResolve();
+}
+</script>
 </body>
 </html>
