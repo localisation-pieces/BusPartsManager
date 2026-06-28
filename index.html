@@ -39,6 +39,9 @@
     onSnapshot(DB_REF, (snap) => {
       if(!snap.exists()) return;
       const r = snap.data();
+      // Ne pas écraser si le document ne contient que le champ init
+      const keys = Object.keys(r).filter(k => k !== 'init');
+      if(keys.length === 0) return;
       if(r.articles)      DB.articles      = r.articles;
       if(r.orders)        DB.orders        = r.orders;
       if(r.kits)          DB.kits          = r.kits;
