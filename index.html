@@ -48,7 +48,12 @@
       if(r.activity)      DB.activity      = r.activity;
       if(r.messages)      DB.messages      = r.messages;
       if(r.settings)      DB.settings      = r.settings;
-      if(r.users)         DB.users         = r.users;
+      if(r.users) {
+        DB.users = r.users.map(u => {
+          const ex = DB.users.find(x => x.id === u.id || x.login === u.login);
+          return (ex && ex.pass) ? { ...u, pass: ex.pass } : u;
+        });
+      }
       if(window.currentUser && window.currentViewId) {
         try { window.refreshCurrentView && window.refreshCurrentView(); } catch(_){}
         try { window.updateBadges && window.updateBadges(); } catch(_){}
@@ -1582,8 +1587,11 @@ async function load() {
         }
         if(!u.statut) u.statut = u.active ? 'actif' : 'en_attente';
         const idx = DB.users.findIndex(x => x.login === u.login);
-        if(idx >= 0) DB.users[idx] = u;
-        else DB.users.push(u);
+        if(idx >= 0) {
+          // Conserver le pass existant si Firebase n'en a pas
+          if(!u.pass && DB.users[idx].pass) u.pass = DB.users[idx].pass;
+          DB.users[idx] = u;
+        } else DB.users.push(u);
       });
     }
   }
