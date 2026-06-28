@@ -1595,8 +1595,10 @@ async function load() {
   // Activer l'écoute temps réel après le chargement initial (uniquement si en ligne)
   try { if(window.fbListen) window.fbListen(); } catch(e) {}
 
-  // Retirer l'écran de chargement
+  // Retirer l'écran de chargement et forcer l'affichage de l'auth
   loadingDiv.remove();
+  const authEl = document.getElementById('auth-screen');
+  if(authEl) authEl.style.display = 'flex';
 }
 
 function resetDB() {
