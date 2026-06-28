@@ -64,6 +64,11 @@
   onAuthStateChanged(auth, (user) => {
     window._fbAuthUser = user;
     if(!user && window.currentUser) { window.doLogout && window.doLogout(); }
+    // Si connecté mais DB vide (Firestore vide), afficher quand même l'auth-screen
+    if(user && !window.currentUser) {
+      const authEl = document.getElementById('auth-screen');
+      if(authEl && authEl.style.display === 'none') authEl.style.display = 'flex';
+    }
   });
 
   window._firebaseReady = true;
