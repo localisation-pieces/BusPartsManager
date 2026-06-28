@@ -4,6 +4,75 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BusPartsManager — Gestion Pièces de Rechange</title>
+<!-- Firebase SDK (v10 ESM) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyD7LxL8v6KnJGTGm9nRlBN4tL5724WFdsQ",
+    authDomain: "buspartsmanager-13971.firebaseapp.com",
+    projectId: "buspartsmanager-13971",
+    storageBucket: "buspartsmanager-13971.firebasestorage.app",
+    messagingSenderId: "470052325973",
+    appId: "1:470052325973:web:b861672ecec3ee4cd3a2dc"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const fsdb  = getFirestore(fbApp);
+  const auth  = getAuth(fbApp);
+  const DB_REF = doc(fsdb, 'bpm', 'database');
+
+  window.fbSave = async function(data) {
+    try { await setDoc(DB_REF, data, { merge: false }); }
+    catch(e) { try { localStorage.setItem('bpm_db_backup', JSON.stringify(data)); } catch(_){} }
+  };
+
+  window.fbLoad = async function() {
+    try { const s = await getDoc(DB_REF); if(s.exists()) return s.data(); }
+    catch(e) {}
+    return null;
+  };
+
+  window.fbListen = function(cb) {
+    onSnapshot(DB_REF, (snap) => {
+      if(!snap.exists()) return;
+      const r = snap.data();
+      const keys = Object.keys(r).filter(k => k !== 'init');
+      if(keys.length === 0) return;
+      if(cb) { cb(r); return; }
+      if(r.articles)      DB.articles      = r.articles;
+      if(r.orders)        DB.orders        = r.orders;
+      if(r.kits)          DB.kits          = r.kits;
+      if(r.tools)         DB.tools         = r.tools;
+      if(r.loans)         DB.loans         = r.loans;
+      if(r.notifications) DB.notifications = r.notifications;
+      if(r.activity)      DB.activity      = r.activity;
+      if(r.messages)      DB.messages      = r.messages;
+      if(r.settings)      DB.settings      = r.settings;
+      if(r.users)         DB.users         = r.users;
+      try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(_){}
+      if(window.currentUser && window.currentViewId) {
+        try { window.refreshCurrentView && window.refreshCurrentView(); } catch(_){}
+        try { window.updateBadges && window.updateBadges(); } catch(_){}
+      }
+    });
+  };
+
+  window.fbSignIn     = (email, pass) => signInWithEmailAndPassword(auth, email, pass);
+  window.fbSignOut    = ()            => signOut(auth);
+  window.fbCreateUser = (email, pass) => createUserWithEmailAndPassword(auth, email, pass);
+  window.fbResetPassword = (email)   => sendPasswordResetEmail(auth, email);
+
+  onAuthStateChanged(auth, (user) => {
+    window._fbAuthUser = user;
+    if(!user && window.currentUser) { window.doLogout && window.doLogout(); }
+  });
+
+  // Firebase prêt — sync en arrière-plan sans bloquer l'affichage
+  if(window._fbReadyResolve) window._fbReadyResolve();
+</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230B2545'/><rect x='8' y='8' width='84' height='84' rx='14' fill='none' stroke='%23F2A23C' stroke-width='4'/><text y='.92em' font-size='62' x='18'>🚌</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -324,17 +393,34 @@
     <h2>Connexion</h2>
     <div class="form-group">
       <label>Matricule (identifiant)</label>
-      <input type="text" id="login-user" placeholder="5 chiffres" value="00001" maxlength="5" inputmode="numeric">
+      <input type="text" id="login-user" placeholder="5 chiffres" maxlength="5" inputmode="numeric">
     </div>
     <div class="form-group">
       <label>Mot de passe</label>
-      <input type="password" id="login-pass" placeholder="Votre mot de passe" value="admin123">
+      <input type="password" id="login-pass" placeholder="Votre mot de passe">
     </div>
     <div id="login-error" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
     <button class="btn btn-primary btn-block" style="margin-top:8px;padding:12px" onclick="doLogin()">Se connecter</button>
     <p style="text-align:center;margin-top:16px;font-size:13px"><button onclick="showSignup()" style="background:none;border:none;color:var(--primary);cursor:pointer;font-weight:600;text-decoration:underline">Créer un compte</button></p>
-    <p style="text-align:center;margin-top:16px;font-size:12px;color:var(--text3)">Comptes démo : 00001/admin123 (admin) · 10001/mag123 (magasinier) · 20001/agent123 (agent)</p>
-    <p style="text-align:center;margin-top:8px"><button onclick="resetDB()" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;text-decoration:underline">Réinitialiser les données</button></p>
+    <p style="text-align:center;margin-top:8px;font-size:12px"><button onclick="showResetPassword()" style="background:none;border:none;color:var(--text3);cursor:pointer;text-decoration:underline">Mot de passe oublié ?</button></p>
+    
+
+  <!-- RESET PASSWORD VIEW -->
+  <div class="auth-card" id="reset-view" style="display:none">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">🚌</div>
+      <div><h1>BusPartsManager</h1><span>Réinitialisation</span></div>
+    </div>
+    <h2>Mot de passe oublié</h2>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Entrez votre email. Vous recevrez un lien pour créer un nouveau mot de passe.</p>
+    <div class="form-group">
+      <label>Email *</label>
+      <input type="email" id="reset-email" placeholder="votre.email@gmail.com">
+    </div>
+    <div id="reset-error" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
+    <div id="reset-success" style="color:var(--success);font-size:13px;margin-bottom:12px;display:none;"></div>
+    <button class="btn btn-primary btn-block" style="margin-top:8px;padding:12px" onclick="doResetPassword()">📧 Envoyer le lien</button>
+    <p style="text-align:center;margin-top:14px"><button onclick="showLogin()" style="background:none;border:none;color:var(--primary);cursor:pointer;font-weight:600;text-decoration:underline">← Retour à la connexion</button></p>
   </div>
 
   <div class="auth-card" id="signup-view" style="display:none">
@@ -372,7 +458,8 @@
       </select>
     </div>
     <div class="form-group"><label>Téléphone</label><input type="tel" id="su-tel" placeholder="ex: +32 470 00 00 00"></div>
-    <div class="form-group"><label>Mot de passe *</label><input type="password" id="su-pass" placeholder="Choisissez un mot de passe"></div>
+    <div class="form-group"><label>Email *</label><input type="email" id="su-email" placeholder="votre.email@gmail.com"></div>
+    <div class="form-group"><label>Mot de passe *</label><input type="password" id="su-pass" placeholder="Choisissez un mot de passe (6 caractères min.)"></div>
     <div class="form-group"><label>Confirmer le mot de passe *</label><input type="password" id="su-pass2" placeholder="Retapez le mot de passe"></div>
     <div id="signup-error" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
     <button class="btn btn-primary btn-block" style="margin-top:8px;padding:12px" onclick="doSignup()">Envoyer ma demande</button>
@@ -731,7 +818,7 @@
         </div>
 
         <!-- Statistiques temps de préparation -->
-        <div class="grid-4 mb-24" id="journal-stats" style="margin-bottom:20px"></div>
+        <div id="journal-stats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px"></div>
 
         <!-- Tableau journal -->
         <div class="card" style="overflow-x:auto">
@@ -748,6 +835,8 @@
                 <th>Préparé</th>
                 <th>Enlevé</th>
                 <th style="text-align:center">⏱ Tps prépa.</th>
+                <th style="text-align:center">🔔 Attente notif.</th>
+                <th style="text-align:center">🚶 Retrait après notif.</th>
                 <th style="text-align:center">⏱ Tps total</th>
                 <th>BL / OT</th>
               </tr>
@@ -1330,10 +1419,7 @@
 // =============================
 const DB = {
   users: [
-    { id:'u1', login:'00001', pass:'admin123', name:'Admin Système', matricule:'00001', tel:'+32 2 515 20 00', email:'admin@stib.be', role:'admin', magasin:'', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile','admin','settings'] },
-    { id:'u2', login:'10001', pass:'mag123', name:'Jean DUPONT', matricule:'10001', tel:'+32 470 11 22 33', email:'j.dupont@stib.be', role:'magasinier', magasin:'2K', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
-    { id:'u3', login:'20001', pass:'agent123', name:'Mohamed BENSALEM', matricule:'20001', tel:'+32 470 44 55 66', email:'m.bensalem@stib.be', role:'agent', magasin:'2K', active:true, statut:'actif', perms:['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile'] },
-    { id:'u4', login:'10002', pass:'mag123', name:'Sophie MARTIN', matricule:'10002', tel:'+32 470 77 88 99', email:'s.martin@stib.be', role:'magasinier', magasin:'2C', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
+    { id:'u1', login:'00001', name:'Admin Système', matricule:'00001', tel:'', email:'mezhas@gmail.com', role:'admin', magasin:'', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile','admin','settings'] },
   ],
   articles: [
     { id:'a1', sap:'10001234', desc:'Filtre à huile moteur', fournisseur:'MANN-FILTER', fournisseurRef:'W940/25', magasin:'2K', emplacement:'A1-E2-C3', keywords:'filtre huile moteur lubrification', busStandard:true, busArticule:true, serialise:false, reparable:false, chimique:false, stock:12, photo:'' },
@@ -1411,9 +1497,11 @@ let currentBLOrderId = null;
 let photoDataUrl = '';
 
 function save() {
+  // Sauvegarde Firebase (partagée) + backup local
+  if(window.fbSave) {
+    window.fbSave(JSON.parse(JSON.stringify(DB)));
+  }
   try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
-  // Sync Firebase si disponible
-  try { if(window.fbSave) window.fbSave(JSON.parse(JSON.stringify(DB))); } catch(e){}
 }
 
 function saveCart() {
@@ -1426,7 +1514,6 @@ function loadCart() {
   try {
     const saved = localStorage.getItem('bpm_cart_' + currentUser.id);
     cart = saved ? JSON.parse(saved) : [];
-    // Nettoyer les articles qui n'existent plus en stock
     cart = cart.filter(c => {
       const a = DB.articles.find(x => x.id === c.id);
       return a && a.stock > 0;
@@ -1434,44 +1521,37 @@ function loadCart() {
   } catch(e) { cart = []; }
 }
 function load() {
-  // All pages in current version
   const ALL_PERMS = {
     admin: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile','admin','settings'],
     magasinier: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile'],
     agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile']
   };
-  // New pages added in v1.1 — always add to existing users
   const NEW_PAGES = ['tools','myloans','loansmgr','profile','kits','messages','journal'];
 
+  // Charger depuis localStorage immédiatement
   try {
     const d = localStorage.getItem('bpm_db');
     if(d) {
       const parsed = JSON.parse(d);
-      if(parsed.articles) DB.articles = parsed.articles;
+      if(parsed.articles)      DB.articles      = parsed.articles;
       if(parsed.orders && parsed.orders.length) DB.orders = parsed.orders;
-      if(parsed.kits && parsed.kits.length) DB.kits = parsed.kits;
+      if(parsed.kits && parsed.kits.length)     DB.kits   = parsed.kits;
       if(parsed.notifications) DB.notifications = parsed.notifications;
-      if(parsed.activity) DB.activity = parsed.activity;
+      if(parsed.activity)      DB.activity      = parsed.activity;
       if(parsed.settings) {
         DB.settings = parsed.settings;
         if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
       }
-      // Restore tools and loans if saved
-      if(parsed.tools && parsed.tools.length) DB.tools = parsed.tools;
-      if(parsed.loans) DB.loans = parsed.loans;
+      if(parsed.tools && parsed.tools.length) DB.tools  = parsed.tools;
+      if(parsed.loans)    DB.loans    = parsed.loans;
       if(parsed.messages) DB.messages = parsed.messages;
-      // Merge users — always upgrade perms to include new pages
       if(parsed.users && parsed.users.length) {
         parsed.users.forEach(u => {
-          // Assign full default perms if missing
           if(!u.perms || !u.perms.length) {
             u.perms = ALL_PERMS[u.role] || ['catalog','cart','myorders','notifications'];
           } else {
-            // Add any new pages that belong to this role but are missing from saved perms
             const rolePerms = ALL_PERMS[u.role] || [];
-            NEW_PAGES.forEach(p => {
-              if(rolePerms.includes(p) && !u.perms.includes(p)) u.perms.push(p);
-            });
+            NEW_PAGES.forEach(p => { if(rolePerms.includes(p) && !u.perms.includes(p)) u.perms.push(p); });
           }
           if(!u.statut) u.statut = u.active ? 'actif' : 'en_attente';
           const idx = DB.users.findIndex(x => x.login === u.login);
@@ -1480,12 +1560,13 @@ function load() {
         });
       }
     }
-  } catch(e){ console.warn('DB load error:', e); }
+  } catch(e) { console.warn('DB load error:', e); }
 }
 
 function resetDB() {
   if(!confirm('Réinitialiser toutes les données ? Les articles et commandes seront effacés.')) return;
   localStorage.removeItem('bpm_db');
+  if(window.fbSave) window.fbSave({});
   location.reload();
 }
 
@@ -1495,13 +1576,52 @@ function resetDB() {
 function showSignup() {
   document.getElementById('login-view').style.display = 'none';
   document.getElementById('pending-view').style.display = 'none';
+  document.getElementById('reset-view').style.display = 'none';
   document.getElementById('signup-view').style.display = 'block';
   populateSignupMagasins();
 }
 function showLogin() {
   document.getElementById('signup-view').style.display = 'none';
   document.getElementById('pending-view').style.display = 'none';
+  document.getElementById('reset-view').style.display = 'none';
   document.getElementById('login-view').style.display = 'block';
+}
+function showResetPassword() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('signup-view').style.display = 'none';
+  document.getElementById('pending-view').style.display = 'none';
+  document.getElementById('reset-view').style.display = 'block';
+  document.getElementById('reset-error').style.display = 'none';
+  document.getElementById('reset-success').style.display = 'none';
+  document.getElementById('reset-email').value = '';
+}
+async function doResetPassword() {
+  const email = document.getElementById('reset-email').value.trim();
+  const errEl = document.getElementById('reset-error');
+  const sucEl = document.getElementById('reset-success');
+  errEl.style.display = 'none';
+  sucEl.style.display = 'none';
+  if(!email) {
+    errEl.textContent = '⚠️ Veuillez saisir votre email.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const btn = document.querySelector('#reset-view .btn-primary');
+  if(btn) { btn.disabled = true; btn.textContent = 'Envoi en cours...'; }
+  try {
+    await window.fbResetPassword(email);
+    sucEl.textContent = '✅ Email envoyé ! Vérifiez votre boîte mail et suivez le lien pour réinitialiser votre mot de passe.';
+    sucEl.style.display = 'block';
+    document.getElementById('reset-email').value = '';
+  } catch(e) {
+    let msg = 'Erreur lors de l\'envoi.';
+    if(e.code === 'auth/user-not-found') msg = '🚫 Aucun compte trouvé avec cet email.';
+    if(e.code === 'auth/invalid-email') msg = '🚫 Email invalide.';
+    errEl.textContent = msg;
+    errEl.style.display = 'block';
+  } finally {
+    if(btn) { btn.disabled = false; btn.textContent = '📧 Envoyer le lien'; }
+  }
 }
 function populateSignupMagasins() {
   const sel = document.getElementById('su-magasin');
@@ -1524,18 +1644,19 @@ function validateMatriculeInput(input, errId) {
   if(errEl) errEl.style.display = 'none';
 }
 
-function doSignup() {
+async function doSignup() {
   const prenom = document.getElementById('su-prenom').value.trim();
   const nom = document.getElementById('su-nom').value.trim();
   const matricule = document.getElementById('su-matricule').value.replace(/[^0-9]/g,'');
   const magasin = document.getElementById('su-magasin').value;
   const role = document.getElementById('su-role').value;
   const tel = document.getElementById('su-tel').value.trim();
+  const email = document.getElementById('su-email').value.trim();
   const pass = document.getElementById('su-pass').value;
   const pass2 = document.getElementById('su-pass2').value;
   const errEl = document.getElementById('signup-error');
 
-  if(!prenom || !nom || !magasin || !pass) {
+  if(!prenom || !nom || !magasin || !email || !pass) {
     errEl.textContent = '⚠️ Veuillez remplir tous les champs obligatoires (*).';
     errEl.style.display = 'block';
     return;
@@ -1546,8 +1667,8 @@ function doSignup() {
     document.getElementById('su-matricule').focus();
     return;
   }
-  if(pass.length < 4) {
-    errEl.textContent = '⚠️ Le mot de passe doit comporter au moins 4 caractères.';
+  if(pass.length < 6) {
+    errEl.textContent = '⚠️ Le mot de passe doit comporter au moins 6 caractères.';
     errEl.style.display = 'block';
     return;
   }
@@ -1562,59 +1683,92 @@ function doSignup() {
     return;
   }
 
+  const btn = document.querySelector('#signup-view .btn-primary');
+  if(btn) { btn.disabled = true; btn.textContent = 'Envoi en cours...'; }
+
   const defaultPerms = {
     magasinier: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','profile'],
     agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','profile']
   };
 
-  DB.users.push({
-    id: 'u' + Date.now(),
-    login: matricule, pass, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email:'',
-    role, magasin, active: false, statut: 'en_attente',
-    perms: defaultPerms[role] || []
-  });
-  save();
-  addNotification('admin', '👤 Nouvelle inscription', `${prenom} ${nom} (${matricule}) demande la création d'un compte ${roleLabel(role)}`);
-  errEl.style.display = 'none';
-  document.getElementById('signup-view').style.display = 'none';
-  document.getElementById('pending-view').style.display = 'block';
-  // reset form
-  ['su-prenom','su-nom','su-matricule','su-tel','su-pass','su-pass2'].forEach(id => document.getElementById(id).value = '');
+  try {
+    // Créer le compte Firebase Auth immédiatement
+    await window.fbCreateUser(email, pass);
+    // Déconnecter l'utilisateur qui vient de s'inscrire (il doit attendre la validation)
+    await window.fbSignOut();
+
+    DB.users.push({
+      id: 'u' + Date.now(),
+      login: matricule, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email,
+      role, magasin, active: false, statut: 'en_attente',
+      perms: defaultPerms[role] || []
+    });
+    save();
+    addNotification('admin', '👤 Nouvelle inscription', `${prenom} ${nom} (${matricule}) demande la création d'un compte ${roleLabel(role)}`);
+    errEl.style.display = 'none';
+    document.getElementById('signup-view').style.display = 'none';
+    document.getElementById('pending-view').style.display = 'block';
+    ['su-prenom','su-nom','su-matricule','su-tel','su-email','su-pass','su-pass2'].forEach(id => document.getElementById(id).value = '');
+  } catch(e) {
+    let msg = 'Erreur lors de la création du compte.';
+    if(e.code === 'auth/email-already-in-use') msg = '🚫 Cet email est déjà utilisé.';
+    if(e.code === 'auth/invalid-email') msg = '🚫 Email invalide.';
+    if(e.code === 'auth/weak-password') msg = '🚫 Mot de passe trop court (minimum 6 caractères).';
+    errEl.textContent = msg;
+    errEl.style.display = 'block';
+  } finally {
+    if(btn) { btn.disabled = false; btn.textContent = 'Envoyer ma demande'; }
+  }
 }
 
-function doLogin() {
-  const login = document.getElementById('login-user').value.trim();
-  const pass = document.getElementById('login-pass').value.trim();
-  const user = DB.users.find(u => u.login === login && u.pass === pass);
-  const errEl = document.getElementById('login-error');
-  if(!user) {
-    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-    errEl.style.display = 'block';
+async function doLogin() {
+  const login = document.getElementById("login-user").value.trim();
+  const pass = document.getElementById("login-pass").value.trim();
+  const errEl = document.getElementById("login-error");
+  errEl.style.display = "none";
+  if(!login || !pass) {
+    errEl.textContent = "Veuillez saisir votre matricule et mot de passe.";
+    errEl.style.display = "block";
     return;
   }
-  if(user.statut === 'en_attente') {
-    errEl.textContent = '⏳ Votre compte est en attente de validation par un administrateur.';
-    errEl.style.display = 'block';
+  const user = DB.users.find(u => u.login === login);
+  if(!user || !user.email) {
+    errEl.textContent = "Identifiant inconnu. Contactez un administrateur.";
+    errEl.style.display = "block";
     return;
   }
-  if(user.statut === 'refuse') {
-    errEl.textContent = '🚫 Votre demande d\'inscription a été refusée. Contactez un administrateur.';
-    errEl.style.display = 'block';
+  if(user.statut === "en_attente") {
+    errEl.textContent = "⏳ Votre compte est en attente de validation par un administrateur.";
+    errEl.style.display = "block";
+    return;
+  }
+  if(user.statut === "refuse") {
+    errEl.textContent = "🚫 Votre demande a été refusée. Contactez un administrateur.";
+    errEl.style.display = "block";
     return;
   }
   if(!user.active) {
-    errEl.textContent = '🚫 Ce compte est désactivé. Contactez un administrateur.';
-    errEl.style.display = 'block';
+    errEl.textContent = "🚫 Ce compte est désactivé. Contactez un administrateur.";
+    errEl.style.display = "block";
     return;
   }
-  currentUser = user;
-  errEl.style.display = 'none';
-  startApp();
+  try {
+    await window.fbSignIn(user.email, pass);
+    currentUser = user;
+    window.currentUser = user;
+    errEl.style.display = "none";
+    startApp();
+  } catch(e) {
+    errEl.textContent = "Mot de passe incorrect.";
+    errEl.style.display = "block";
+  }
 }
 
 function doLogout() {
-  saveCart(); // Sauvegarder le panier avant de déconnecter
+  saveCart();
   currentUser = null;
+  window.currentUser = null;
+  window.currentViewId = null;
   cart = [];
   // Remettre le badge panier à zéro visuellement
   const cc = document.getElementById('cart-count');
@@ -1701,6 +1855,7 @@ function navGo(page) {
 // NAVIGATION
 // =============================
 function showView(name) {
+  window.currentViewId = name;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('view-' + name).classList.add('active');
@@ -3176,41 +3331,68 @@ function populateUserMagasinSelect(selected) {
   }).join('');
 }
 
-function saveUser() {
+async function saveUser() {
   const matricule = document.getElementById('user-matricule').value.replace(/[^0-9]/g,'');
   const pass = document.getElementById('user-pass').value.trim();
   const name = document.getElementById('user-name').value.trim();
+  const email = document.getElementById('user-email').value.trim();
   const errEl = document.getElementById('user-matricule-error');
   errEl.style.display = 'none';
 
-  if(!pass || !name) { alert('Veuillez remplir tous les champs obligatoires.'); return; }
+  if(!name) { alert('Veuillez saisir le nom complet.'); return; }
   if(matricule.length !== 5) {
     errEl.textContent = `⚠️ Le matricule doit comporter exactement 5 chiffres (${matricule.length}/5 saisi).`;
     errEl.style.display = 'block';
     document.getElementById('user-matricule').focus();
     return;
   }
+  if(!editingUserId && !email) { alert('Veuillez saisir un email.'); return; }
+  if(!editingUserId && !pass) { alert('Veuillez saisir un mot de passe.'); return; }
+
   const role = document.getElementById('user-role').value;
   const defaultPerms = {
     admin: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile','admin','settings'],
     magasinier: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile'],
     agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile']
   };
-  const data = { login: matricule, pass, name, matricule, tel: document.getElementById('user-tel').value.trim(), email: document.getElementById('user-email').value.trim(), role, magasin: document.getElementById('user-magasin').value, perms: defaultPerms[role] || [] };
+  const data = { login: matricule, name, matricule, tel: document.getElementById('user-tel').value.trim(), email, role, magasin: document.getElementById('user-magasin').value, perms: defaultPerms[role] || [] };
+
   if(editingUserId) {
+    // Modification d'un utilisateur existant
     const idx = DB.users.findIndex(u => u.id === editingUserId);
     const dup = DB.users.find(u => (u.login === matricule || u.matricule === matricule) && u.id !== editingUserId);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    // Préserver le statut existant (ne pas valider automatiquement un compte en attente)
     DB.users[idx] = { ...DB.users[idx], ...data };
+    save();
+    closeModal('modal-add-user');
+    renderAdmin();
+    showNotif('✅', 'Utilisateur modifié', `${name} a été mis à jour`);
   } else {
+    // Nouvel utilisateur → créer sur Firebase
     const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+
+    const saveBtn = document.querySelector('#modal-add-user .btn-primary');
+    if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Création en cours...'; }
+
+    try {
+      await window.fbCreateUser(email, pass);
+      DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+      save();
+      closeModal('modal-add-user');
+      renderAdmin();
+      showNotif('✅', 'Utilisateur créé', `${name} peut maintenant se connecter avec son email et mot de passe`);
+    } catch(e) {
+      let msg = 'Erreur lors de la création du compte.';
+      if(e.code === 'auth/email-already-in-use') msg = '🚫 Cet email est déjà utilisé sur Firebase.';
+      if(e.code === 'auth/invalid-email') msg = '🚫 Email invalide.';
+      if(e.code === 'auth/weak-password') msg = '🚫 Mot de passe trop court (minimum 6 caractères).';
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    } finally {
+      if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
+    }
   }
-  save();
-  closeModal('modal-add-user');
-  renderAdmin();
 }
 
 function validateUser(id) {
@@ -4731,9 +4913,11 @@ function getJournalRows() {
   return DB.orders
     .filter(o => o.status === 'delivered' || o.status === 'prepared' || o.status === 'cancelled')
     .map(o => {
-      const prepDelay = (o.preparedAt && o.takenAt) ? (o.preparedAt - o.takenAt) : null;
-      const totalDelay = (o.deliveredAt && o.createdAt) ? (o.deliveredAt - o.createdAt) : null;
-      return { ...o, prepDelay, totalDelay };
+      const prepDelay      = (o.preparedAt && o.takenAt)    ? (o.preparedAt  - o.takenAt)    : null;
+      const totalDelay     = (o.deliveredAt && o.createdAt) ? (o.deliveredAt - o.createdAt)  : null;
+      const waitNotif      = (o.preparedAt && o.createdAt)  ? (o.preparedAt  - o.createdAt)  : null;  // commande → notif "prête"
+      const retrievalDelay = (o.deliveredAt && o.preparedAt)? (o.deliveredAt - o.preparedAt) : null;  // notif "prête" → livraison
+      return { ...o, prepDelay, totalDelay, waitNotif, retrievalDelay };
     })
     .sort((a,b) => b.createdAt - a.createdAt);
 }
@@ -4811,17 +4995,24 @@ function filterJournal() {
 function renderJournalStats(rows) {
   const el = document.getElementById('journal-stats');
   const completed = rows.filter(r => r.status === 'delivered');
-  const prepTimes = completed.filter(r => r.prepDelay != null).map(r => r.prepDelay);
-  const totalTimes = completed.filter(r => r.totalDelay != null).map(r => r.totalDelay);
-  const avgPrep = prepTimes.length ? Math.round(prepTimes.reduce((s,v)=>s+v,0)/prepTimes.length) : null;
-  const avgTotal = totalTimes.length ? Math.round(totalTimes.reduce((s,v)=>s+v,0)/totalTimes.length) : null;
-  const maxPrep = prepTimes.length ? Math.max(...prepTimes) : null;
+  const prepTimes      = completed.filter(r => r.prepDelay      != null).map(r => r.prepDelay);
+  const totalTimes     = completed.filter(r => r.totalDelay     != null).map(r => r.totalDelay);
+  const waitNotifTimes = rows.filter(r => r.waitNotif      != null).map(r => r.waitNotif);
+  const retrievalTimes = completed.filter(r => r.retrievalDelay != null).map(r => r.retrievalDelay);
+
+  const avg = arr => arr.length ? Math.round(arr.reduce((s,v)=>s+v,0)/arr.length) : null;
+  const avgPrep      = avg(prepTimes);
+  const avgTotal     = avg(totalTimes);
+  const avgWaitNotif = avg(waitNotifTimes);
+  const avgRetrieval = avg(retrievalTimes);
 
   el.innerHTML = `
     <div class="stat-card"><div class="stat-label">Commandes affichées</div><div class="stat-value">${rows.length}</div><div class="stat-sub">dans la sélection</div><span class="stat-icon">📋</span></div>
     <div class="stat-card"><div class="stat-label">Livrées</div><div class="stat-value">${completed.length}</div><div class="stat-sub">enlèvements confirmés</div><span class="stat-icon">📤</span></div>
-    <div class="stat-card" style="--before-color:var(--amber)"><div class="stat-label">⏱ Tps prépa. moyen</div><div class="stat-value" style="font-size:22px">${avgPrep != null ? formatDuration(avgPrep) : '—'}</div><div class="stat-sub">de prise en charge → préparé</div><span class="stat-icon">⚙️</span></div>
-    <div class="stat-card"><div class="stat-label">⏱ Tps total moyen</div><div class="stat-value" style="font-size:22px">${avgTotal != null ? formatDuration(avgTotal) : '—'}</div><div class="stat-sub">de commande → enlèvement</div><span class="stat-icon">🕐</span></div>
+    <div class="stat-card" style="--before-color:var(--info)"><div class="stat-label">⏳ Attente notif. moy.</div><div class="stat-value" style="font-size:22px">${avgWaitNotif != null ? formatDuration(avgWaitNotif) : '—'}</div><div class="stat-sub">commande → notification prête</div><span class="stat-icon">🔔</span></div>
+    <div class="stat-card" style="--before-color:var(--success)"><div class="stat-label">🚶 Retrait après notif. moy.</div><div class="stat-value" style="font-size:22px">${avgRetrieval != null ? formatDuration(avgRetrieval) : '—'}</div><div class="stat-sub">notif. prête → enlèvement</div><span class="stat-icon">📦</span></div>
+    <div class="stat-card" style="--before-color:var(--amber)"><div class="stat-label">⏱ Tps prépa. moyen</div><div class="stat-value" style="font-size:22px">${avgPrep != null ? formatDuration(avgPrep) : '—'}</div><div class="stat-sub">prise en charge → préparé</div><span class="stat-icon">⚙️</span></div>
+    <div class="stat-card"><div class="stat-label">⏱ Tps total moyen</div><div class="stat-value" style="font-size:22px">${avgTotal != null ? formatDuration(avgTotal) : '—'}</div><div class="stat-sub">commande → enlèvement</div><span class="stat-icon">🕐</span></div>
   `;
 }
 
@@ -4851,6 +5042,8 @@ function renderJournalTable(rows) {
 
     const prepColor = o.prepDelay == null ? '' : o.prepDelay < 15*60000 ? 'color:var(--success);font-weight:700' : o.prepDelay < 60*60000 ? 'color:var(--amber-dark);font-weight:700' : 'color:var(--danger);font-weight:700';
     const totalColor = o.totalDelay == null ? '' : o.totalDelay < 30*60000 ? 'color:var(--success);font-weight:700' : o.totalDelay < 2*3600000 ? 'color:var(--amber-dark);font-weight:700' : 'color:var(--danger);font-weight:700';
+    const waitNotifColor = o.waitNotif == null ? '' : o.waitNotif < 30*60000 ? 'color:var(--success);font-weight:700' : o.waitNotif < 2*3600000 ? 'color:var(--amber-dark);font-weight:700' : 'color:var(--danger);font-weight:700';
+    const retrievalColor = o.retrievalDelay == null ? '' : o.retrievalDelay < 30*60000 ? 'color:var(--success);font-weight:700' : o.retrievalDelay < 3*3600000 ? 'color:var(--amber-dark);font-weight:700' : 'color:var(--danger);font-weight:700';
 
     const statusCol = o.status === 'cancelled'
       ? `<span class="badge badge-red">Annulée</span>`
@@ -4868,6 +5061,8 @@ function renderJournalTable(rows) {
       <td style="font-size:12px;white-space:nowrap">${o.preparedAt ? `<span style="font-size:11px;color:var(--text3)">${o.preparedBy||''}</span><br>${fmt(o.preparedAt)}` : '<span style="color:var(--text3)">—</span>'}</td>
       <td style="font-size:12px;white-space:nowrap">${fmt(o.deliveredAt)}</td>
       <td style="text-align:center"><span style="${prepColor}">${formatDuration(o.prepDelay)}</span></td>
+      <td style="text-align:center"><span style="${waitNotifColor}">${formatDuration(o.waitNotif)}</span></td>
+      <td style="text-align:center"><span style="${retrievalColor}">${formatDuration(o.retrievalDelay)}</span></td>
       <td style="text-align:center"><span style="${totalColor}">${formatDuration(o.totalDelay)}</span></td>
       <td style="font-size:11px;font-family:var(--font-mono)">${o.blNumero ? `<span style="color:var(--navy)">${o.blNumero}</span>` : ''}${o.otNumber ? `<br><span style="color:var(--text3)">OT: ${o.otNumber}</span>` : ''}</td>
     </tr>`;
@@ -4897,7 +5092,7 @@ function exportJournalExcel() {
     ['Date commande','Agent','Matricule','Bus N°','Marque bus','Type','Contenu',
      'Pris en charge par','Date prise en charge',
      'Préparé par','Date préparation','Date enlèvement',
-     'Tps préparation (min)','Tps total (min)',
+     'Tps préparation (min)','Attente notif. (min)','Retrait après notif. (min)','Tps total (min)',
      'BL','OT','Statut']
   ];
 
@@ -4909,8 +5104,10 @@ function exportJournalExcel() {
       o.kitId ? kitNom : (o.items.length + ' article(s)'),
       o.takenByName||'', fmt(o.takenAt),
       o.preparedBy||'', fmt(o.preparedAt), fmt(o.deliveredAt),
-      o.prepDelay  != null ? Math.round(o.prepDelay  / 60000) : '',
-      o.totalDelay != null ? Math.round(o.totalDelay / 60000) : '',
+      o.prepDelay      != null ? Math.round(o.prepDelay      / 60000) : '',
+      o.waitNotif      != null ? Math.round(o.waitNotif      / 60000) : '',
+      o.retrievalDelay != null ? Math.round(o.retrievalDelay / 60000) : '',
+      o.totalDelay     != null ? Math.round(o.totalDelay     / 60000) : '',
       o.blNumero||'', o.otNumber||'',
       o.status === 'delivered' ? 'Livré' : o.status === 'prepared' ? 'Préparé' : o.status === 'cancelled' ? 'Annulé' : o.status
     ]);
@@ -4918,7 +5115,7 @@ function exportJournalExcel() {
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(sheetData);
-  ws['!cols'] = [20,22,10,10,16,8,22,20,20,18,20,20,18,14,16,12,12].map(w => ({wch:w}));
+  ws['!cols'] = [20,22,10,10,16,8,22,20,20,18,20,20,16,18,20,14,16,12,12].map(w => ({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws, 'Journal');
 
   const fileName = 'Journal_Preparation_' + new Date().toISOString().slice(0,10) + '.xlsx';
@@ -4929,96 +5126,46 @@ function exportJournalExcel() {
 // Login on Enter
 document.getElementById('login-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
-// Firebase ready promise — résolu quand Firebase est initialisé
-window.fbReady = new Promise(resolve => { window._fbReadyResolve = resolve; });
+// Exposer refreshCurrentView pour le listener temps réel
+window.refreshCurrentView = function() {
+  if(!window.currentViewId) return;
+  const id = window.currentViewId;
+  if(id === 'dashboard')    try { renderDashboard(); } catch(_){}
+  else if(id === 'orders')  try { renderOrders(); } catch(_){}
+  else if(id === 'deliveries') try { renderDeliveries(); } catch(_){}
+  else if(id === 'journal') try { renderJournal(); } catch(_){}
+  else if(id === 'notifications') try { renderNotifications(); } catch(_){}
+  else if(id === 'messages') try { renderInbox(); } catch(_){}
+  else if(id === 'myorders') try { renderMyOrders(); } catch(_){}
+};
 
 // INIT
+window.fbReady = new Promise(resolve => { window._fbReadyResolve = resolve; });
 load();
-// Firebase sync (si disponible)
-if(window.fbReady) {
-  window.fbReady.then(() => {
-    if(window.fbLoad) {
-      window.fbLoad().then(r => {
-        if(r && r.users && r.users.length) {
-          if(r.articles) DB.articles = r.articles;
-          if(r.orders) DB.orders = r.orders;
-          if(r.kits) DB.kits = r.kits;
-          if(r.tools) DB.tools = r.tools;
-          if(r.loans) DB.loans = r.loans;
-          if(r.notifications) DB.notifications = r.notifications;
-          if(r.activity) DB.activity = r.activity;
-          if(r.messages) DB.messages = r.messages;
-          if(r.settings) DB.settings = r.settings;
-          if(r.users) DB.users = r.users;
-          try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
-        }
-      }).catch(() => {});
-    }
-    if(window.fbListen) {
-      window.fbListen(r => {
-        if(!r || !r.users || !r.users.length) return;
-        if(r.articles) DB.articles = r.articles;
-        if(r.orders) DB.orders = r.orders;
-        if(r.kits) DB.kits = r.kits;
-        if(r.tools) DB.tools = r.tools;
-        if(r.loans) DB.loans = r.loans;
+
+// Firebase sync en arrière-plan (sans bloquer l'affichage)
+window.fbReady.then(() => {
+  if(window.fbLoad) {
+    window.fbLoad().then(r => {
+      if(r && r.users && r.users.length) {
+        if(r.articles)      DB.articles      = r.articles;
+        if(r.orders)        DB.orders        = r.orders;
+        if(r.kits)          DB.kits          = r.kits;
+        if(r.tools)         DB.tools         = r.tools;
+        if(r.loans)         DB.loans         = r.loans;
         if(r.notifications) DB.notifications = r.notifications;
-        if(r.activity) DB.activity = r.activity;
-        if(r.messages) DB.messages = r.messages;
-        if(r.settings) DB.settings = r.settings;
-        if(r.users) DB.users = r.users;
+        if(r.activity)      DB.activity      = r.activity;
+        if(r.messages)      DB.messages      = r.messages;
+        if(r.settings)      DB.settings      = r.settings;
+        if(r.users)         DB.users         = r.users;
         try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
-        if(window.currentUser && window.currentViewId) {
-          try { window.refreshCurrentView && window.refreshCurrentView(); } catch(_){}
-          try { window.updateBadges && window.updateBadges(); } catch(_){}
-        }
-      });
-    }
-  }).catch(() => {});
-}
+      }
+    }).catch(() => {});
+  }
+  if(window.fbListen) window.fbListen();
+}).catch(() => {});
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script type="module">
-// Firebase — chargé en dernier, ne bloque jamais l'affichage
-try {
-  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
-  const { getFirestore, doc, setDoc, getDoc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyD7LxL8v6KnJGTGm9nRlBN4tL5724WFdsQ",
-    authDomain: "buspartsmanager-13971.firebaseapp.com",
-    projectId: "buspartsmanager-13971",
-    storageBucket: "buspartsmanager-13971.appspot.com",
-    messagingSenderId: "749286772337",
-    appId: "1:749286772337:web:abc123"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const fsdb = getFirestore(app);
-  const DB_REF = doc(fsdb, 'bpm', 'database');
-
-  window.fbSave = async (data) => {
-    try { await setDoc(DB_REF, data, { merge: false }); } catch(e) {}
-  };
-
-  window.fbLoad = async () => {
-    try { const s = await getDoc(DB_REF); if(s.exists()) return s.data(); } catch(e) {}
-    return null;
-  };
-
-  window.fbListen = (cb) => {
-    onSnapshot(DB_REF, snap => {
-      if(snap.exists()) cb(snap.data());
-    });
-  };
-
-  // Signaler que Firebase est prêt
-  if(window._fbReadyResolve) window._fbReadyResolve();
-} catch(e) {
-  console.warn('Firebase non disponible:', e.message);
-  if(window._fbReadyResolve) window._fbReadyResolve();
-}
-</script>
 </body>
 </html>
