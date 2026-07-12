@@ -1,23 +1,25 @@
 {
-  "name": "BusPartsManager",
+  "name": "BusPartsManager — Gestion Pièces de Rechange",
   "short_name": "BusParts",
-  "description": "Gestion des pièces de rechange pour bus",
-  "start_url": "/BusPartsManager/",
-  "scope": "/BusPartsManager/",
+  "description": "Gestion des pièces de rechange, kits, outillage et prêts pour l'atelier bus.",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "background_color": "#0B2545",
   "theme_color": "#0B2545",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='38' fill='%230B2545'/><rect x='15' y='15' width='162' height='162' rx='26' fill='none' stroke='%23F2A23C' stroke-width='8'/><text y='.88em' font-size='120' x='34'>🚌</text></svg>",
+      "src": "icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='100' fill='%230B2545'/><rect x='40' y='40' width='432' height='432' rx='70' fill='none' stroke='%23F2A23C' stroke-width='20'/><text y='.88em' font-size='320' x='90'>🚌</text></svg>",
+      "src": "icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
