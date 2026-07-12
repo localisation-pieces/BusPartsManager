@@ -311,8 +311,19 @@
 </head>
 <body>
 
+<!-- FIREBASE BOOT SCREEN -->
+<div id="fb-boot-screen" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--navy);color:white;gap:16px">
+  <div style="font-size:48px" id="fb-boot-icon">🚌</div>
+  <div id="fb-boot-text" style="font-size:14px;opacity:0.85">Connexion au serveur...</div>
+  <div id="fb-boot-error" style="display:none;max-width:420px;text-align:center;background:rgba(179,38,30,0.15);border:1px solid rgba(179,38,30,0.4);border-radius:10px;padding:18px 22px;font-size:13px;line-height:1.6">
+    <strong style="display:block;margin-bottom:8px;font-size:15px">⚠️ Connexion impossible</strong>
+    <span id="fb-boot-error-msg">Le serveur ne répond pas. Vérifiez votre connexion internet.</span>
+    <button onclick="location.reload()" style="margin-top:14px;background:var(--amber);color:var(--navy-deep);border:none;padding:9px 18px;border-radius:7px;font-weight:700;cursor:pointer;font-size:13px">🔄 Réessayer</button>
+  </div>
+</div>
+
 <!-- AUTH -->
-<div id="auth-screen">
+<div id="auth-screen" style="display:none">
   <div class="auth-card" id="login-view">
     <div class="auth-logo">
       <div class="auth-logo-icon">🚌</div>
@@ -1324,6 +1335,116 @@
   </div>
 </div>
 
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getFirestore, doc, setDoc, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
+    enableIndexedDbPersistence
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyD7LxL8v6KnJGTGm9nRlBN4tL5724WFdsQ",
+    authDomain: "buspartsmanager-13971.firebaseapp.com",
+    projectId: "buspartsmanager-13971",
+    storageBucket: "buspartsmanager-13971.firebasestorage.app",
+    messagingSenderId: "470052325973",
+    appId: "1:470052325973:web:b861672ecec3ee4cd3a2dc"
+  };
+
+  // Un seul système d'authentification : matricule + mot de passe, vérifiés
+  // contre les données synchronisées Firestore (pas de Firebase Auth séparé —
+  // c'était le mélange de 2 systèmes qui posait problème avant).
+  const fbApp = initializeApp(firebaseConfig);
+  const fsdb  = getFirestore(fbApp);
+  try { enableIndexedDbPersistence(fsdb); } catch(e) {}
+
+  const DATA_DOC = doc(fsdb, 'bpm', 'database');
+
+  let dataUnsub = null;
+  let bootTimedOut = false;
+  const BOOT_TIMEOUT_MS = 9000;
+
+  function bootError(msg) {
+    document.getElementById('fb-boot-icon').textContent = '⚠️';
+    document.getElementById('fb-boot-text').style.display = 'none';
+    document.getElementById('fb-boot-error').style.display = 'block';
+    if (msg) document.getElementById('fb-boot-error-msg').textContent = msg;
+  }
+
+  function showAuthScreenNow() {
+    document.getElementById('fb-boot-screen').style.display = 'none';
+    document.getElementById('auth-screen').style.display = 'flex';
+  }
+
+  // Sécurité anti-écran-blanc : si Firebase ne répond pas en 9s, on prévient
+  // clairement l'utilisateur au lieu de rester bloqué indéfiniment.
+  const bootTimer = setTimeout(() => {
+    bootTimedOut = true;
+    bootError('Le serveur ne répond pas après 9 secondes. Vérifiez votre connexion internet, ou réessayez.');
+  }, BOOT_TIMEOUT_MS);
+
+  // Chargement NON-bloquant : on attend juste le premier instantané des données,
+  // rien d'autre ne doit empêcher l'affichage de l'app.
+  function startFirestoreSync() {
+    if (dataUnsub) return;
+    dataUnsub = onSnapshot(DATA_DOC, (snap) => {
+      if (bootTimedOut) return; // trop tard, l'utilisateur a déjà vu l'erreur
+      clearTimeout(bootTimer);
+      if (snap.exists()) {
+        window.applyRemoteData(snap.data());
+      } else {
+        // Première utilisation : on initialise le document avec les données de démo locales
+        window.pushLocalDataToFirestore();
+      }
+      if (document.getElementById('fb-boot-screen').style.display !== 'none') {
+        showAuthScreenNow();
+      }
+      window.onFirestoreReady && window.onFirestoreReady();
+    }, (err) => {
+      clearTimeout(bootTimer);
+      bootError('Erreur Firestore : ' + (err && err.message ? err.message : 'connexion refusée. Vérifiez les règles de sécurité Firestore.'));
+    });
+  }
+
+  // Écriture "débattue" (debounced) du document unique de données.
+  let saveTimer = null, pendingSaveData = null;
+  window.fbSaveData = function(data) {
+    pendingSaveData = data;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      const toSave = pendingSaveData;
+      try {
+        await setDoc(DATA_DOC, toSave, { merge: false });
+      } catch (e) {
+        console.warn('Sauvegarde Firestore échouée (les données restent en cache local):', e);
+      }
+    }, 500);
+  };
+
+  // Réservation ATOMIQUE d'un matricule (transaction Firestore) : garantit
+  // l'unicité même si deux personnes s'inscrivent au même instant sur 2 appareils.
+  // Renvoie true si réservé avec succès, false si déjà pris.
+  window.fbReserveMatricule = async function(matricule) {
+    const ref = doc(fsdb, 'matricules', matricule);
+    try {
+      await runTransaction(fsdb, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new Error('MATRICULE_TAKEN');
+        tx.set(ref, { reservedAt: serverTimestamp() });
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  window.fbReleaseMatricule = async function(matricule) {
+    try { await deleteDoc(doc(fsdb, 'matricules', matricule)); } catch(e) {}
+  };
+
+  startFirestoreSync();
+</script>
+
 <script>
 // =============================
 // DATA STORE
@@ -1410,9 +1531,51 @@ let currentOTOrderId = null;
 let currentBLOrderId = null;
 let photoDataUrl = '';
 
+let applyingRemote = false; // évite de renvoyer en boucle les données qu'on vient de recevoir
+
 function save() {
+  // Cache local instantané (fonctionne hors-ligne, sert de secours)
   try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
+  // Synchronisation temps réel vers Firestore (débattue côté module Firebase)
+  if (!applyingRemote && window.fbSaveData) window.fbSaveData(DB);
 }
+
+// Appelé par le module Firebase à chaque mise à jour reçue du serveur
+// (que ce soit depuis cet appareil ou un autre appareil connecté).
+window.applyRemoteData = function(data) {
+  applyingRemote = true;
+  try {
+    if(data.users && data.users.length) DB.users = data.users;
+    if(data.articles) DB.articles = data.articles;
+    if(data.orders) DB.orders = data.orders;
+    if(data.kits) DB.kits = data.kits;
+    if(data.tools) DB.tools = data.tools;
+    if(data.loans) DB.loans = data.loans;
+    if(data.notifications) DB.notifications = data.notifications;
+    if(data.messages) DB.messages = data.messages;
+    if(data.activity) DB.activity = data.activity;
+    if(data.settings) {
+      DB.settings = data.settings;
+      if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
+    }
+    try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
+    // Si l'app est déjà affichée, on rafraîchit l'écran courant pour refléter
+    // en direct les changements faits depuis un autre appareil.
+    const modalOpen = document.querySelector('.modal.open, .modal-overlay.open');
+    if (!modalOpen && document.getElementById('app').style.display !== 'none' && typeof currentView !== 'undefined' && currentView) {
+      try { showView(currentView); } catch(e) {}
+      try { updateBadges(); } catch(e) {}
+    }
+  } finally {
+    applyingRemote = false;
+  }
+};
+
+// Première utilisation : le document Firestore n'existe pas encore →
+// on l'initialise avec les données de démo locales définies ci-dessus.
+window.pushLocalDataToFirestore = function() {
+  if (window.fbSaveData) window.fbSaveData(DB);
+};
 
 function saveCart() {
   if(!currentUser) return;
@@ -1431,16 +1594,17 @@ function loadCart() {
     });
   } catch(e) { cart = []; }
 }
-function load() {
-  // All pages in current version
-  const ALL_PERMS = {
-    admin: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile','admin','settings'],
-    magasinier: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile'],
-    agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile']
-  };
-  // New pages added in v1.1 — always add to existing users
-  const NEW_PAGES = ['tools','myloans','loansmgr','profile','kits','messages','journal'];
+const ALL_PERMS = {
+  admin: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile','admin','settings'],
+  magasinier: ['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','journal','notifications','messages','profile'],
+  agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile']
+};
 
+// Chargement local (cache hors-ligne) : sert d'affichage immédiat pendant que
+// Firestore se connecte en tâche de fond. La vraie source de vérité, dès
+// qu'elle répond, arrive via window.applyRemoteData (voir module Firebase).
+function load() {
+  const NEW_PAGES = ['tools','myloans','loansmgr','profile','kits','messages','journal'];
   try {
     const d = localStorage.getItem('bpm_db');
     if(d) {
@@ -1454,18 +1618,14 @@ function load() {
         DB.settings = parsed.settings;
         if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
       }
-      // Restore tools and loans if saved
       if(parsed.tools && parsed.tools.length) DB.tools = parsed.tools;
       if(parsed.loans) DB.loans = parsed.loans;
       if(parsed.messages) DB.messages = parsed.messages;
-      // Merge users — always upgrade perms to include new pages
       if(parsed.users && parsed.users.length) {
         parsed.users.forEach(u => {
-          // Assign full default perms if missing
           if(!u.perms || !u.perms.length) {
             u.perms = ALL_PERMS[u.role] || ['catalog','cart','myorders','notifications'];
           } else {
-            // Add any new pages that belong to this role but are missing from saved perms
             const rolePerms = ALL_PERMS[u.role] || [];
             NEW_PAGES.forEach(p => {
               if(rolePerms.includes(p) && !u.perms.includes(p)) u.perms.push(p);
@@ -1478,12 +1638,14 @@ function load() {
         });
       }
     }
-  } catch(e){ console.warn('DB load error:', e); }
+  } catch(e){ console.warn('DB load error (cache local):', e); }
 }
 
 function resetDB() {
-  if(!confirm('Réinitialiser toutes les données ? Les articles et commandes seront effacés.')) return;
+  if(!confirm('Réinitialiser toutes les données sur TOUS les appareils connectés ? Les articles et commandes seront effacés définitivement.')) return;
   localStorage.removeItem('bpm_db');
+  // Réinitialise aussi côté serveur pour que tous les appareils repartent à zéro
+  if(window.fbSaveData) window.fbSaveData(DB);
   location.reload();
 }
 
@@ -1556,6 +1718,29 @@ function doSignup() {
   }
   if(DB.users.find(u => u.login === matricule || u.matricule === matricule)) {
     errEl.textContent = `🚫 Le matricule ${matricule} est déjà associé à un compte existant.`;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, errEl);
+}
+
+async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, errEl) {
+  const submitBtn = document.querySelector('#signup-view .btn-primary');
+  if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Vérification du matricule...'; }
+
+  // Réservation ATOMIQUE côté serveur : garantit qu'aucun autre appareil ne
+  // peut créer le même matricule en même temps (contrairement à une simple
+  // vérification locale, qui ne protège pas contre les inscriptions simultanées).
+  let reserved = false;
+  try {
+    reserved = window.fbReserveMatricule ? await window.fbReserveMatricule(matricule) : true;
+  } catch(e) { reserved = false; }
+
+  if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer ma demande'; }
+
+  if(!reserved) {
+    errEl.textContent = `🚫 Le matricule ${matricule} vient d'être pris par une autre inscription. Choisissez-en un autre.`;
     errEl.style.display = 'block';
     return;
   }
@@ -1698,7 +1883,9 @@ function navGo(page) {
 // =============================
 // NAVIGATION
 // =============================
+let currentView = null;
 function showView(name) {
+  currentView = name;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('view-' + name).classList.add('active');
@@ -3199,12 +3386,40 @@ function saveUser() {
     const idx = DB.users.findIndex(u => u.id === editingUserId);
     const dup = DB.users.find(u => (u.login === matricule || u.matricule === matricule) && u.id !== editingUserId);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    // Préserver le statut existant (ne pas valider automatiquement un compte en attente)
+    // Si le matricule a changé, on libère l'ancien et réserve le nouveau
+    const oldMatricule = DB.users[idx].matricule;
+    if(oldMatricule !== matricule) {
+      saveUserSubmit(async () => {
+        const ok = window.fbReserveMatricule ? await window.fbReserveMatricule(matricule) : true;
+        if(!ok) return false;
+        if(window.fbReleaseMatricule && oldMatricule) window.fbReleaseMatricule(oldMatricule);
+        DB.users[idx] = { ...DB.users[idx], ...data };
+        return true;
+      }, errEl, matricule);
+      return;
+    }
     DB.users[idx] = { ...DB.users[idx], ...data };
+    save();
+    closeModal('modal-add-user');
+    renderAdmin();
   } else {
     const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+    saveUserSubmit(async () => {
+      const ok = window.fbReserveMatricule ? await window.fbReserveMatricule(matricule) : true;
+      if(!ok) return false;
+      DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+      return true;
+    }, errEl, matricule);
+  }
+}
+
+async function saveUserSubmit(actionFn, errEl, matricule) {
+  const ok = await actionFn();
+  if(!ok) {
+    errEl.textContent = `🚫 Le matricule ${matricule} vient d'être pris. Choisissez-en un autre.`;
+    errEl.style.display = 'block';
+    return;
   }
   save();
   closeModal('modal-add-user');
@@ -3228,6 +3443,8 @@ function refuseUser(id) {
   u.statut = 'refuse';
   u.active = false;
   save();
+  // Libère le matricule côté serveur pour qu'il puisse être réutilisé par quelqu'un d'autre
+  if(window.fbReleaseMatricule && u.matricule) window.fbReleaseMatricule(u.matricule);
   renderAdmin();
   showNotif('🚫', 'Demande refusée', u.name);
 }
