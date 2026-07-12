@@ -1390,7 +1390,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
-    getFirestore, doc, setDoc, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
+    getFirestore, doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
     enableIndexedDbPersistence
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -1410,6 +1410,16 @@
   const fsdb  = getFirestore(fbApp);
   try { enableIndexedDbPersistence(fsdb); } catch(e) {}
 
+  // DEUX documents séparés, pour ne jamais charger la base complète avant
+  // qu'un utilisateur soit connecté :
+  // - AUTH_DOC (bpm/auth) : petit document avec juste les utilisateurs
+  //   (mot de passe haché, jamais en clair) + réglages généraux (magasins,
+  //   marques) nécessaires à l'écran de connexion/inscription. Chargé tout
+  //   de suite, avant login.
+  // - DATA_DOC (bpm/database) : tout le reste (catalogue, stock, commandes,
+  //   prêts, messages...). Chargé UNIQUEMENT après une connexion réussie
+  //   (voir window.startFullDataSync, appelé depuis doLogin/tryAutoLogin).
+  const AUTH_DOC = doc(fsdb, 'bpm', 'auth');
   const DATA_DOC = doc(fsdb, 'bpm', 'database');
 
   let dataUnsub = null;
@@ -1436,32 +1446,74 @@
     bootError('Le serveur ne répond pas après 9 secondes. Vérifiez votre connexion internet, ou réessayez.');
   }, BOOT_TIMEOUT_MS);
 
-  // Chargement NON-bloquant : on attend juste le premier instantané des données,
-  // rien d'autre ne doit empêcher l'affichage de l'app.
-  function startFirestoreSync() {
-    if (dataUnsub) return;
-    dataUnsub = onSnapshot(DATA_DOC, (snap) => {
+  // Chargement NON-bloquant du petit document d'authentification seulement :
+  // rien d'autre ne doit empêcher l'affichage de l'écran de connexion, et la
+  // base complète n'est pas demandée à ce stade.
+  function startAuthSync() {
+    onSnapshot(AUTH_DOC, async (snap) => {
       if (bootTimedOut) return; // trop tard, l'utilisateur a déjà vu l'erreur
       clearTimeout(bootTimer);
       if (snap.exists()) {
-        window.applyRemoteData(snap.data());
+        window.applyRemoteAuthData(snap.data());
       } else {
-        // Première utilisation : on initialise le document avec les données de démo locales
-        window.pushLocalDataToFirestore();
+        // bpm/auth n'existe pas encore. Deux cas possibles :
+        // 1) Toute première installation → bpm/database n'existe pas non
+        //    plus, on initialise avec les identifiants de démo locaux.
+        // 2) Migration depuis l'ancienne version (document unique) → les
+        //    VRAIES données existent déjà dans bpm/database : on initialise
+        //    bpm/auth à partir de celles-ci, pas des identifiants de démo,
+        //    pour ne jamais perdre l'accès des comptes existants.
+        try {
+          const dataSnap = await getDoc(DATA_DOC);
+          if (dataSnap.exists() && dataSnap.data().users && dataSnap.data().users.length) {
+            const d = dataSnap.data();
+            const authData = { users: d.users, settings: d.settings || {} };
+            await setDoc(AUTH_DOC, authData);
+            window.applyRemoteAuthData(authData);
+          } else {
+            window.pushLocalAuthToFirestore();
+          }
+        } catch (e) {
+          window.pushLocalAuthToFirestore();
+        }
       }
       if (document.getElementById('fb-boot-screen').style.display !== 'none') {
         showAuthScreenNow();
       }
-      window.onFirestoreReady && window.onFirestoreReady();
     }, (err) => {
       clearTimeout(bootTimer);
       bootError('Erreur Firestore : ' + (err && err.message ? err.message : 'connexion refusée. Vérifiez les règles de sécurité Firestore.'));
     });
   }
 
-  // Écriture "débattue" (debounced) du document unique de données.
+  // Démarre le chargement du document complet — appelé UNIQUEMENT après une
+  // connexion réussie (voir doLogin/tryAutoLogin dans le script principal).
+  window.startFullDataSync = function() {
+    if (dataUnsub) return;
+    dataUnsub = onSnapshot(DATA_DOC, (snap) => {
+      if (snap.exists()) {
+        window.applyRemoteData(snap.data());
+      } else {
+        window.pushLocalDataToFirestore();
+      }
+      window.onFirestoreReady && window.onFirestoreReady();
+    }, (err) => {
+      console.warn('Erreur de synchronisation des données complètes :', err);
+    });
+  };
+
+  // Arrête le chargement du document complet — appelé à la déconnexion, pour
+  // qu'un visiteur qui rouvrirait l'app sans se reconnecter n'y ait plus accès.
+  window.stopFullDataSync = function() {
+    if (dataUnsub) { dataUnsub(); dataUnsub = null; }
+  };
+
+  // Écriture "débattue" (debounced) du document complet. Ne fait rien tant
+  // que la synchronisation complète n'a pas démarré (donc jamais avant
+  // connexion) — sinon on écraserait la vraie base par un état local partiel.
   let saveTimer = null, pendingSaveData = null;
   window.fbSaveData = function(data) {
+    if (!dataUnsub) return;
     pendingSaveData = data;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
@@ -1472,6 +1524,33 @@
         console.warn('Sauvegarde Firestore échouée (les données restent en cache local):', e);
       }
     }, 500);
+  };
+
+  // Écriture "débattue" du petit document d'authentification — toujours
+  // active, avant et après connexion.
+  let authSaveTimer = null, pendingAuthData = null;
+  window.fbSaveAuthData = function(data) {
+    pendingAuthData = data;
+    if (authSaveTimer) clearTimeout(authSaveTimer);
+    authSaveTimer = setTimeout(async () => {
+      const toSave = pendingAuthData;
+      try {
+        await setDoc(AUTH_DOC, toSave, { merge: false });
+      } catch (e) {
+        console.warn('Sauvegarde Firestore (identifiants) échouée :', e);
+      }
+    }, 500);
+  };
+
+  // Ajout ciblé d'une notification dans le document complet, sans avoir
+  // besoin de l'avoir déjà chargé — utilisé par l'écran d'inscription, avant
+  // toute connexion (arrayUnion ajoute sans lire le reste du document).
+  window.fbAppendNotification = async function(notifObj) {
+    try {
+      await updateDoc(DATA_DOC, { notifications: arrayUnion(notifObj) });
+    } catch (e) {
+      console.warn('Notification (inscription) non propagée :', e);
+    }
   };
 
   // Réservation ATOMIQUE d'un matricule (transaction Firestore) : garantit
@@ -1495,7 +1574,7 @@
     try { await deleteDoc(doc(fsdb, 'matricules', matricule)); } catch(e) {}
   };
 
-  startFirestoreSync();
+  startAuthSync();
 </script>
 
 <script>
@@ -1628,14 +1707,63 @@ let photoDataUrl = '';
 let applyingRemote = false; // évite de renvoyer en boucle les données qu'on vient de recevoir
 
 function save() {
-  // Cache local instantané (fonctionne hors-ligne, sert de secours)
-  try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
-  // Synchronisation temps réel vers Firestore (débattue côté module Firebase)
+  // Cache local instantané (fonctionne hors-ligne, sert de secours) —
+  // seulement une fois les données complètes chargées (après connexion),
+  // pour ne jamais écraser un bon cache existant par un état partiel
+  // (avant connexion, DB ne contient volontairement pas tout).
+  if (fullDataLoaded) {
+    try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
+  }
+  // Synchronisation temps réel vers Firestore (débattue côté module Firebase).
+  // Le document complet (bpm/database) n'est écrit que si la synchronisation
+  // complète a démarré, donc uniquement après connexion.
   if (!applyingRemote && window.fbSaveData) window.fbSaveData(DB);
+  // Le petit document d'identifiants (bpm/auth) est lui toujours tenu à jour.
+  if (!applyingRemote) maybeSaveAuthProjection();
 }
 
-// Appelé par le module Firebase à chaque mise à jour reçue du serveur
-// (que ce soit depuis cet appareil ou un autre appareil connecté).
+let lastAuthProjectionJSON = null;
+function maybeSaveAuthProjection() {
+  if (!window.fbSaveAuthData) return;
+  const json = JSON.stringify(DB.users);
+  if (json === lastAuthProjectionJSON) return;
+  lastAuthProjectionJSON = json;
+  window.fbSaveAuthData({ users: DB.users, settings: DB.settings });
+}
+
+// Appelé par le module Firebase dès réception du petit document
+// d'authentification (bpm/auth) — disponible AVANT connexion, contrairement
+// aux données complètes. Contient les utilisateurs (avec mot de passe haché,
+// jamais en clair) et les réglages généraux nécessaires à l'écran de
+// connexion/inscription (liste des magasins, marques...).
+window.applyRemoteAuthData = function(data) {
+  if (!data) return;
+  applyingRemote = true;
+  try {
+    if (data.users && data.users.length) DB.users = data.users;
+    if (data.settings) {
+      DB.settings = data.settings;
+      if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
+    }
+    if (currentUser) {
+      const updated = DB.users.find(u => u.id === currentUser.id);
+      if (updated) currentUser = updated;
+    }
+  } finally {
+    applyingRemote = false;
+  }
+  if (typeof migratePasswordsIfNeeded === 'function') migratePasswordsIfNeeded();
+};
+
+// Première utilisation : le document bpm/auth n'existe pas encore →
+// on l'initialise avec les identifiants de démo locaux.
+window.pushLocalAuthToFirestore = function() {
+  if (window.fbSaveAuthData) window.fbSaveAuthData({ users: DB.users, settings: DB.settings });
+};
+
+// Appelé par le module Firebase à chaque mise à jour reçue du serveur pour
+// le document complet (bpm/database) — UNIQUEMENT après une connexion
+// réussie (que ce soit depuis cet appareil ou un autre appareil connecté).
 window.applyRemoteData = function(data) {
   applyingRemote = true;
   try {
@@ -1651,6 +1779,11 @@ window.applyRemoteData = function(data) {
     if(data.settings) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
+    }
+    fullDataLoaded = true;
+    if (currentUser) {
+      const updated = DB.users.find(u => u.id === currentUser.id);
+      if (updated) currentUser = updated;
     }
     try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
     // Si l'app est déjà affichée, on rafraîchit l'écran courant pour refléter
@@ -1704,24 +1837,37 @@ const ALL_PERMS = {
 // Chargement local (cache hors-ligne) : sert d'affichage immédiat pendant que
 // Firestore se connecte en tâche de fond. La vraie source de vérité, dès
 // qu'elle répond, arrive via window.applyRemoteData (voir module Firebase).
+//
+// Sécurité : les données "lourdes" (catalogue, commandes, prêts, messages...)
+// ne sont PAS injectées tout de suite dans DB, même si elles sont présentes
+// dans le cache local d'un appareil déjà utilisé — elles restent de côté
+// dans pendingCachedData et ne sont appliquées qu'après une connexion
+// réussie, via restoreCachedFullDataIfAny(). Seuls les identifiants
+// utilisateurs et les réglages généraux (magasins, marques...) sont
+// nécessaires avant connexion (écran de connexion/inscription).
+let pendingCachedData = null;
+let fullDataLoaded = false;
+
 function load() {
   const NEW_PAGES = ['tools','myloans','loansmgr','profile','kits','messages','journal'];
   try {
     const d = localStorage.getItem('bpm_db');
     if(d) {
       const parsed = JSON.parse(d);
-      if(parsed.articles) DB.articles = parsed.articles;
-      if(parsed.orders && parsed.orders.length) DB.orders = parsed.orders;
-      if(parsed.kits && parsed.kits.length) DB.kits = parsed.kits;
-      if(parsed.notifications) DB.notifications = parsed.notifications;
-      if(parsed.activity) DB.activity = parsed.activity;
+      pendingCachedData = {
+        articles: parsed.articles,
+        orders: parsed.orders,
+        kits: parsed.kits,
+        notifications: parsed.notifications,
+        activity: parsed.activity,
+        tools: parsed.tools,
+        loans: parsed.loans,
+        messages: parsed.messages
+      };
       if(parsed.settings) {
         DB.settings = parsed.settings;
         if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
       }
-      if(parsed.tools && parsed.tools.length) DB.tools = parsed.tools;
-      if(parsed.loans) DB.loans = parsed.loans;
-      if(parsed.messages) DB.messages = parsed.messages;
       if(parsed.users && parsed.users.length) {
         parsed.users.forEach(u => {
           if(!u.perms || !u.perms.length) {
@@ -1743,11 +1889,31 @@ function load() {
   migratePasswordsIfNeeded();
 }
 
+// Appelée juste après une connexion réussie : applique les données lourdes
+// mises de côté par load() (si un cache existait sur cet appareil), pour un
+// affichage immédiat hors-ligne, en attendant que la vraie synchronisation
+// Firestore (window.startFullDataSync) confirme/complète ces données.
+function restoreCachedFullDataIfAny() {
+  if (!pendingCachedData) return;
+  const c = pendingCachedData;
+  if(c.articles) DB.articles = c.articles;
+  if(c.orders && c.orders.length) DB.orders = c.orders;
+  if(c.kits && c.kits.length) DB.kits = c.kits;
+  if(c.notifications) DB.notifications = c.notifications;
+  if(c.activity) DB.activity = c.activity;
+  if(c.tools && c.tools.length) DB.tools = c.tools;
+  if(c.loans) DB.loans = c.loans;
+  if(c.messages) DB.messages = c.messages;
+  pendingCachedData = null;
+  fullDataLoaded = true;
+}
+
 function resetDB() {
   if(!confirm('Réinitialiser toutes les données sur TOUS les appareils connectés ? Les articles et commandes seront effacés définitivement.')) return;
   localStorage.removeItem('bpm_db');
   // Réinitialise aussi côté serveur pour que tous les appareils repartent à zéro
   if(window.fbSaveData) window.fbSaveData(DB);
+  if(window.fbSaveAuthData) window.fbSaveAuthData({ users: DB.users, settings: DB.settings });
   location.reload();
 }
 
@@ -1862,7 +2028,12 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
     perms: defaultPerms[role] || []
   });
   save();
-  addNotification('admin', '👤 Nouvelle inscription', `${prenom} ${nom} (${matricule}) demande la création d'un compte ${roleLabel(role)}`);
+  // Le visiteur n'est pas connecté : il n'a pas la base complète en mémoire,
+  // donc pas moyen de passer par save() classique pour la notification.
+  // On l'écrit directement dans Firestore (ajout ciblé, sans lire le reste).
+  if (window.fbAppendNotification) {
+    window.fbAppendNotification({ id:'n'+Date.now(), to:'admin', title:'👤 Nouvelle inscription', msg:`${prenom} ${nom} (${matricule}) demande la création d'un compte ${roleLabel(role)}`, read:false, time:Date.now() });
+  }
   errEl.style.display = 'none';
   document.getElementById('signup-view').style.display = 'none';
   document.getElementById('pending-view').style.display = 'block';
@@ -1905,6 +2076,10 @@ async function doLogin() {
   } else {
     try { localStorage.removeItem('bpm_session'); } catch(e){}
   }
+  // Ce n'est qu'à partir d'ici, une fois connecté, que le reste de la base
+  // (catalogue, commandes, prêts, messages...) est chargé.
+  restoreCachedFullDataIfAny();
+  window.startFullDataSync && window.startFullDataSync();
   startApp();
 }
 
@@ -1912,6 +2087,14 @@ function doLogout() {
   saveCart(); // Sauvegarder le panier avant de déconnecter
   currentUser = null;
   cart = [];
+  // On arrête la synchronisation des données complètes et on les vide de la
+  // mémoire : un visiteur qui rouvrirait l'app sans se reconnecter ne doit
+  // plus y avoir accès (ni au réseau, ni dans les outils de développement).
+  window.stopFullDataSync && window.stopFullDataSync();
+  DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = [];
+  DB.notifications = []; DB.messages = []; DB.activity = [];
+  fullDataLoaded = false;
+  try { localStorage.removeItem('bpm_db'); } catch(e){}
   // Remettre le badge panier à zéro visuellement
   const cc = document.getElementById('cart-count');
   if(cc) cc.textContent = '0';
@@ -1938,6 +2121,8 @@ window.tryAutoLogin = function() {
       return false;
     }
     currentUser = user;
+    restoreCachedFullDataIfAny();
+    window.startFullDataSync && window.startFullDataSync();
     startApp();
     return true;
   } catch(e) { return false; }
