@@ -1692,6 +1692,7 @@ const DB = {
     ]
   },
   activity: [],
+  stockMovements: [],
   kits: [
     { id:'k1', nom:'Entretien 15 000 km', description:'Kit d\'entretien standard 15 000 km — Bus standard et articulé', articles:[{articleId:'a1',qty:1},{articleId:'a2',qty:2}], marques:[], busStandard:true, busArticule:true, actif:true },
     { id:'k2', nom:'Entretien 30 000 km', description:'Kit d\'entretien complet 30 000 km', articles:[{articleId:'a1',qty:1},{articleId:'a3',qty:1},{articleId:'a4',qty:2}], marques:['Mercedes-Benz'], busStandard:true, busArticule:false, actif:true },
@@ -1786,6 +1787,7 @@ window.applyRemoteData = function(data) {
     if(data.notifications) DB.notifications = data.notifications;
     if(data.messages) DB.messages = data.messages;
     if(data.activity) DB.activity = data.activity;
+    if(data.stockMovements) DB.stockMovements = data.stockMovements;
     if(data.settings) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
@@ -1872,7 +1874,8 @@ function load() {
         activity: parsed.activity,
         tools: parsed.tools,
         loans: parsed.loans,
-        messages: parsed.messages
+        messages: parsed.messages,
+        stockMovements: parsed.stockMovements
       };
       if(parsed.settings) {
         DB.settings = parsed.settings;
@@ -1914,6 +1917,7 @@ function restoreCachedFullDataIfAny() {
   if(c.tools && c.tools.length) DB.tools = c.tools;
   if(c.loans) DB.loans = c.loans;
   if(c.messages) DB.messages = c.messages;
+  if(c.stockMovements) DB.stockMovements = c.stockMovements;
   pendingCachedData = null;
   fullDataLoaded = true;
 }
@@ -2102,7 +2106,7 @@ function doLogout() {
   // plus y avoir accès (ni au réseau, ni dans les outils de développement).
   window.stopFullDataSync && window.stopFullDataSync();
   DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = [];
-  DB.notifications = []; DB.messages = []; DB.activity = [];
+  DB.notifications = []; DB.messages = []; DB.activity = []; DB.stockMovements = [];
   fullDataLoaded = false;
   try { localStorage.removeItem('bpm_db'); } catch(e){}
   // Remettre le badge panier à zéro visuellement
@@ -2567,6 +2571,32 @@ function highlight(text, q) {
   return safe.replace(re, '<mark class="highlight">$1</mark>');
 }
 
+function renderArticleMovements(articleId) {
+  const movements = getArticleMovements(articleId).slice(0, 15);
+  if(!movements.length) {
+    return `
+    <div style="margin-top:16px">
+      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📊 Historique des mouvements</div>
+      <div style="font-size:12px;color:var(--text3)">Aucun mouvement enregistré pour cette pièce.</div>
+    </div>`;
+  }
+  return `
+    <div style="margin-top:16px">
+      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📊 Historique des mouvements${getArticleMovements(articleId).length > 15 ? ' <span style="font-weight:400;color:var(--text3)">(15 derniers)</span>' : ''}</div>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:10px">
+        ${movements.map(m => `
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">
+            <span style="font-size:16px">${stockMovementIcon(m.type)}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12.5px;font-weight:600">${stockMovementLabel(m.type)}${m.detail ? ' · ' + escapeHtml(m.detail) : ''}</div>
+              <div style="font-size:11px;color:var(--text3)">${new Date(m.date).toLocaleString('fr-FR')} · ${escapeHtml(m.user)}</div>
+            </div>
+            <span class="badge ${m.delta > 0 ? 'badge-green' : m.delta < 0 ? 'badge-red' : 'badge-gray'}" style="white-space:nowrap">${m.delta > 0 ? '+' : ''}${m.delta} → ${m.stockAfter}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
 function openArticleDetail(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
@@ -2605,6 +2635,7 @@ function openArticleDetail(id) {
       </div>
     </div>` : ''}
     ${a.keywords ? `<div style="margin-top:12px;font-size:12px;color:var(--text3)">🏷️ ${a.keywords.split(',').map(k=>`<span class="badge badge-gray" style="margin-right:4px">${escapeHtml(k.trim())}</span>`).join('')}</div>` : ''}
+    ${canEdit ? renderArticleMovements(a.id) : ''}
     <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:12px">
         <label style="font-size:13px;color:var(--text2)">Quantité :</label>
@@ -2886,11 +2917,18 @@ function saveArticle() {
 
   if(editingArticleId) {
     const idx = DB.articles.findIndex(a => a.id === editingArticleId);
+    const ancienStock = DB.articles[idx].stock;
     DB.articles[idx] = { ...DB.articles[idx], ...data };
+    if(data.stock !== ancienStock) {
+      logStockMovement(editingArticleId, 'ajustement', data.stock - ancienStock, data.stock, 'Modification manuelle de la fiche article');
+    }
     addActivity('✏️', `Pièce modifiée : ${desc}`);
   } else {
     data.id = 'a' + Date.now();
     DB.articles.push(data);
+    if(data.stock > 0) {
+      logStockMovement(data.id, 'creation', data.stock, data.stock, 'Création de la pièce');
+    }
     addActivity('➕', `Nouvelle pièce ajoutée : ${desc}`);
   }
   save();
@@ -3522,7 +3560,10 @@ function confirmDelivery() {
   // Decrease stock
   o.items.forEach(item => {
     const a = DB.articles.find(x => x.id === item.articleId);
-    if(a) a.stock = Math.max(0, a.stock - item.qty);
+    if(a) {
+      a.stock = Math.max(0, a.stock - item.qty);
+      logStockMovement(a.id, 'sortie', -item.qty, a.stock, `OT ${ot} · ${o.agentName}`);
+    }
   });
 
   addActivity('📤', `Pièces remises à ${o.agentName} (OT: ${ot})`);
@@ -4175,11 +4216,18 @@ function processImportData(csvText, fmt) {
       // Check duplicate by SAP
       const existing = DB.articles.find(a => a.sap === sap);
       if(existing) {
+        const ancienStock = existing.stock;
         Object.assign(existing, article);
+        if(existing.stock !== ancienStock) {
+          logStockMovement(existing.id, 'import', existing.stock - ancienStock, existing.stock, 'Import fichier — mise à jour');
+        }
         updated++;
       } else {
         article.id = 'a' + Date.now() + Math.random().toString(36).slice(2,6);
         DB.articles.push(article);
+        if(article.stock > 0) {
+          logStockMovement(article.id, 'import', article.stock, article.stock, 'Import fichier — création');
+        }
         created++;
       }
     });
@@ -5319,6 +5367,42 @@ function escapeHtml(str) {
 function addActivity(icon, msg) {
   DB.activity.push({ icon, msg, time: Date.now() });
   if(DB.activity.length > 50) DB.activity.shift();
+}
+
+// =============================
+// HISTORIQUE DES MOUVEMENTS DE STOCK (traçabilité/audit)
+// =============================
+// type attendu : 'sortie' | 'entree' | 'ajustement' | 'creation' | 'import'
+// delta : variation de stock (négative pour une sortie)
+// detail : texte libre (référence OT, agent, raison de l'ajustement...)
+if(!DB.stockMovements) DB.stockMovements = [];
+function logStockMovement(articleId, type, delta, stockAfter, detail) {
+  if(!DB.stockMovements) DB.stockMovements = [];
+  DB.stockMovements.push({
+    id: 'mv' + Date.now() + Math.random().toString(36).slice(2,6),
+    articleId, type, delta, stockAfter,
+    date: Date.now(),
+    user: currentUser ? currentUser.name : 'Système',
+    detail: detail || ''
+  });
+  // Limite pour ne pas alourdir indéfiniment le document Firestore
+  if(DB.stockMovements.length > 400) {
+    DB.stockMovements = DB.stockMovements.slice(DB.stockMovements.length - 400);
+  }
+}
+
+function getArticleMovements(articleId) {
+  return (DB.stockMovements || [])
+    .filter(m => m.articleId === articleId)
+    .sort((a,b) => b.date - a.date);
+}
+
+function stockMovementIcon(type) {
+  return type === 'sortie' ? '📤' : type === 'entree' ? '📥' : type === 'creation' ? '➕' : type === 'import' ? '📋' : '✏️';
+}
+
+function stockMovementLabel(type) {
+  return type === 'sortie' ? 'Sortie' : type === 'entree' ? 'Entrée' : type === 'creation' ? 'Création' : type === 'import' ? 'Import' : 'Ajustement';
 }
 
 function showNotif(icon, title, msg) {
