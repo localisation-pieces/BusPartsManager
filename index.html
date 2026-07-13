@@ -1031,7 +1031,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-article')">Annuler</button>
-      <button class="btn btn-primary" onclick="saveArticle()">Enregistrer</button>
+      <button class="btn btn-primary" id="article-save-btn" onclick="saveArticle()">Enregistrer</button>
     </div>
   </div>
 </div>
@@ -1730,7 +1730,8 @@ let editingUserId = null;
 let currentSettingType = null;
 let currentOTOrderId = null;
 let currentBLOrderId = null;
-let photoDataUrl = '';
+let pendingPhotoBlob = null;   // Photo compressée en attente d'upload (nouvelle sélection non encore enregistrée)
+let currentPhotoUrl = '';      // URL (ou ancien base64) de la photo actuelle de la pièce en cours d'édition
 
 let applyingRemote = false; // évite de renvoyer en boucle les données qu'on vient de recevoir
 
@@ -2742,7 +2743,8 @@ function updateCartBadge() {
 function openArticleModal(id) {
   editingArticleId = id || null;
   const a = id ? DB.articles.find(x => x.id === id) : null;
-  photoDataUrl = (a && a.photo) ? a.photo : '';
+  pendingPhotoBlob = null;
+  currentPhotoUrl = (a && a.photo) ? a.photo : '';
 
   document.getElementById('article-modal-title').textContent = id ? 'Modifier la pièce' : 'Nouvelle pièce';
   const sapInput = document.getElementById('art-sap');
@@ -2770,8 +2772,8 @@ function openArticleModal(id) {
 
   const prev = document.getElementById('article-img-preview');
   const lbl = document.getElementById('upload-label-text');
-  if(photoDataUrl) {
-    prev.src = photoDataUrl;
+  if(currentPhotoUrl) {
+    prev.src = currentPhotoUrl;
     prev.style.display = 'block';
     if(lbl) lbl.textContent = '📷 Changer la photo';
   } else {
@@ -2825,19 +2827,84 @@ function getSelectedMarques() {
     .map(b => b.dataset.marque);
 }
 
-function previewImage(input) {
+// =============================
+// PHOTOS DES PIÈCES — hébergement Cloudinary (gratuit, sans carte bancaire)
+// =============================
+// À renseigner après création d'un compte gratuit sur cloudinary.com :
+// 1. Cloud name  : visible en haut du Dashboard Cloudinary, juste après connexion
+// 2. Upload preset : Settings (⚙️) > Upload > "Upload presets" > Add upload preset
+//    → Signing Mode = "Unsigned" (indispensable, sinon l'upload échouera)
+const CLOUDINARY_CLOUD_NAME = 'qv4njmtd';
+const CLOUDINARY_UPLOAD_PRESET = 'busparts_articles';
+
+async function uploadPhotoToCloudinary(articleId, blob) {
+  if(CLOUDINARY_CLOUD_NAME === 'À_REMPLACER' || CLOUDINARY_UPLOAD_PRESET === 'À_REMPLACER') {
+    throw new Error("Cloudinary n'est pas encore configuré (CLOUDINARY_CLOUD_NAME / CLOUDINARY_UPLOAD_PRESET en haut du fichier).");
+  }
+  const formData = new FormData();
+  formData.append('file', blob);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  // Chemin déterministe : si le preset autorise l'écrasement (option
+  // "Overwrite" activée còté preset), remplacer une photo écrase l'ancienne
+  // au lieu d'en laisser une orpheline dans la médiathèque Cloudinary.
+  formData.append('public_id', `articles/${articleId}`);
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: 'POST',
+    body: formData
+  });
+  if(!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Cloudinary a refusé l'envoi (code ${res.status}). ${errText}`);
+  }
+  const json = await res.json();
+  return json.secure_url;
+}
+
+// Redimensionne et compresse une image côté navigateur avant upload
+// (limite la taille max à `maxDim` px sur le plus grand côté, encodée en
+// JPEG à la qualité `quality`). Indispensable à l'échelle de plusieurs
+// milliers de photos : garde chaque fichier léger et rapide à charger.
+function compressImageToBlob(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim) {
+          if(width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Compression échouée')), 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('Image illisible'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Lecture du fichier échouée'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function previewImage(input) {
   const file = input.files[0];
   if(!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    photoDataUrl = e.target.result;
+  const lbl = document.getElementById('upload-label-text');
+  if(lbl) lbl.textContent = '⏳ Compression…';
+  try {
+    const blob = await compressImageToBlob(file, 900, 0.75);
+    pendingPhotoBlob = blob;
     const prev = document.getElementById('article-img-preview');
-    prev.src = photoDataUrl;
+    prev.src = URL.createObjectURL(blob);
     prev.style.display = 'block';
-    const lbl = document.getElementById('upload-label-text');
     if(lbl) lbl.textContent = '📷 Changer la photo';
-  };
-  reader.readAsDataURL(file);
+  } catch(e) {
+    if(lbl) lbl.textContent = currentPhotoUrl ? '📷 Changer la photo' : '📷 Choisir une photo';
+    alert("Impossible de traiter cette image. Réessayez avec une autre photo.");
+  }
 }
 
 function validateSAPInput(input) {
@@ -2884,7 +2951,7 @@ function isChk(id) {
   return btn ? btn.dataset.active === '1' : false;
 }
 
-function saveArticle() {
+async function saveArticle() {
   const sap = document.getElementById('art-sap').value.replace(/[^0-9]/g,'').slice(0,8);
   document.getElementById('art-sap').value = sap;
   const desc = document.getElementById('art-desc').value.trim();
@@ -2913,6 +2980,10 @@ function saveArticle() {
   sapErr.style.display = 'none';
   if(!desc || !magasin) { alert('Veuillez remplir les champs obligatoires (Description, Magasin).'); return; }
 
+  // Identifiant connu à l'avance (même pour une création) pour servir de nom
+  // de fichier déterministe à la photo dans Firebase Storage.
+  const articleId = editingArticleId || ('a' + Date.now());
+
   const data = {
     sap, desc: sanitizeInput(desc),
     fournisseur: document.getElementById('art-fournisseur').value,
@@ -2929,8 +3000,21 @@ function saveArticle() {
     stock: parseInt(document.getElementById('art-stock').value) || 0,
     stockMin: parseInt(document.getElementById('art-stock-min').value) || 0,
     stockMax: parseInt(document.getElementById('art-stock-max').value) || 0,
-    photo: photoDataUrl
+    photo: currentPhotoUrl
   };
+
+  const saveBtn = document.getElementById('article-save-btn');
+
+  if(pendingPhotoBlob) {
+    if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Envoi de la photo…'; }
+    try {
+      data.photo = await uploadPhotoToCloudinary(articleId, pendingPhotoBlob);
+    } catch(e) {
+      if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
+      alert("Échec de l'envoi de la photo vers Cloudinary. Vérifiez la configuration (cloud name / upload preset) ainsi que votre connexion, puis réessayez.\n\nDétail technique : " + (e && e.message ? e.message : e));
+      return;
+    }
+  }
 
   if(editingArticleId) {
     const idx = DB.articles.findIndex(a => a.id === editingArticleId);
@@ -2941,7 +3025,7 @@ function saveArticle() {
     }
     addActivity('✏️', `Pièce modifiée : ${desc}`);
   } else {
-    data.id = 'a' + Date.now();
+    data.id = articleId;
     DB.articles.push(data);
     if(data.stock > 0) {
       logStockMovement(data.id, 'creation', data.stock, data.stock, 'Création de la pièce');
@@ -2949,6 +3033,8 @@ function saveArticle() {
     addActivity('➕', `Nouvelle pièce ajoutée : ${desc}`);
   }
   save();
+  pendingPhotoBlob = null;
+  if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
   closeModal('modal-article');
   filterArticles();
 }
@@ -2957,6 +3043,9 @@ function deleteArticle(id) {
   if(!confirm('Supprimer cette pièce ?')) return;
   DB.articles = DB.articles.filter(a => a.id !== id);
   save();
+  // Note : la photo éventuelle reste dans la médiathèque Cloudinary — la
+  // suppression à distance nécessiterait une clé API secrète, impossible à
+  // exposer côté navigateur sans backend. Sans impact pratique vu le volume.
   closeModal('modal-article-detail');
   filterArticles();
 }
