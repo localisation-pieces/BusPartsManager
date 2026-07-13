@@ -607,6 +607,16 @@
             <div id="activity-list"><div class="empty-state"><p>Aucune activité</p></div></div>
           </div>
         </div>
+        <div class="grid-2" style="margin-top:18px">
+          <div class="card">
+            <div class="section-title">🏆 Pièces les plus demandées <span style="font-weight:400;font-size:11px;color:var(--text3)">(30 derniers jours)</span></div>
+            <div id="top-parts-list"><div class="empty-state"><p>Pas encore de données</p></div></div>
+          </div>
+          <div class="card">
+            <div class="section-title">🏬 Répartition des sorties par magasin <span style="font-weight:400;font-size:11px;color:var(--text3)">(30 derniers jours)</span></div>
+            <div id="top-magasins-list"><div class="empty-state"><p>Pas encore de données</p></div></div>
+          </div>
+        </div>
       </div>
 
       <!-- CATALOG -->
@@ -2306,6 +2316,72 @@ function renderDashboard() {
 
   // Graphique 7 jours
   requestAnimationFrame(() => renderDashChart());
+
+  renderTopPartsAndMagasins();
+}
+
+function renderTopPartsAndMagasins() {
+  const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const recentOrders = DB.orders.filter(o => o.createdAt >= since && o.status !== 'cancelled');
+
+  // Agrégation par pièce (quantité totale demandée)
+  const partQty = {};
+  const magasinQty = {};
+  recentOrders.forEach(o => {
+    (o.items || []).forEach(item => {
+      const a = DB.articles.find(x => x.id === item.articleId);
+      if(!a) return;
+      partQty[a.id] = (partQty[a.id] || 0) + item.qty;
+      const mag = a.magasin || '—';
+      magasinQty[mag] = (magasinQty[mag] || 0) + item.qty;
+    });
+  });
+
+  // Top 5 pièces
+  const topParts = Object.entries(partQty).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const partsEl = document.getElementById('top-parts-list');
+  if(!topParts.length) {
+    partsEl.innerHTML = '<div class="empty-state"><p>Pas encore de données</p></div>';
+  } else {
+    const maxQty = topParts[0][1];
+    partsEl.innerHTML = topParts.map(([articleId, qty], i) => {
+      const a = DB.articles.find(x => x.id === articleId);
+      const pct = Math.max(6, Math.round(qty / maxQty * 100));
+      return `
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span style="font-weight:600">${i+1}. ${escapeHtml(a ? a.desc : 'Pièce supprimée')}</span>
+          <span style="color:var(--text3);font-size:12px">${qty} sorties</span>
+        </div>
+        <div style="height:6px;background:var(--surface2);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:var(--navy);border-radius:4px"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Répartition par magasin
+  const topMagasins = Object.entries(magasinQty).sort((a,b) => b[1]-a[1]);
+  const magEl = document.getElementById('top-magasins-list');
+  if(!topMagasins.length) {
+    magEl.innerHTML = '<div class="empty-state"><p>Pas encore de données</p></div>';
+  } else {
+    const total = topMagasins.reduce((s,[,q]) => s+q, 0);
+    const colors = ['#0B2545','#E8A33D','#3E8E5A','#B04A4A','#6C5B7B','#3D8EA8'];
+    magEl.innerHTML = topMagasins.map(([mag, qty], i) => {
+      const pct = Math.round(qty / total * 100);
+      return `
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span style="font-weight:600">${escapeHtml(getMagasinLabel(mag))}</span>
+          <span style="color:var(--text3);font-size:12px">${qty} sorties (${pct}%)</span>
+        </div>
+        <div style="height:6px;background:var(--surface2);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${colors[i % colors.length]};border-radius:4px"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
 }
 
 function renderDashChart() {
