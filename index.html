@@ -1601,6 +1601,27 @@
     try { await deleteDoc(doc(fsdb, 'matricules', matricule)); } catch(e) {}
   };
 
+  // Réservation ATOMIQUE d'une référence SAP (transaction Firestore) : garantit
+  // l'unicité même si deux personnes créent la même pièce au même instant sur
+  // 2 appareils différents. Renvoie true si réservée avec succès, false si déjà prise.
+  window.fbReserveSAP = async function(sap) {
+    const ref = doc(fsdb, 'sapRefs', sap);
+    try {
+      await runTransaction(fsdb, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new Error('SAP_TAKEN');
+        tx.set(ref, { reservedAt: serverTimestamp() });
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  window.fbReleaseSAP = async function(sap) {
+    try { await deleteDoc(doc(fsdb, 'sapRefs', sap)); } catch(e) {}
+  };
+
   startAuthSync();
 </script>
 
@@ -2983,6 +3004,29 @@ async function saveArticle() {
   // Identifiant connu à l'avance (même pour une création) pour servir de nom
   // de fichier déterministe à la photo dans Firebase Storage.
   const articleId = editingArticleId || ('a' + Date.now());
+  const saveBtn = document.getElementById('article-save-btn');
+
+  // Le SAP a-t-il changé (ou est-ce une création) ? Seul ce cas nécessite une
+  // nouvelle réservation — inutile de re-vérifier si on réenregistre la même
+  // pièce avec le même SAP qu'avant.
+  const existingArticle = editingArticleId ? DB.articles.find(a => a.id === editingArticleId) : null;
+  const sapChanged = !existingArticle || existingArticle.sap !== sap;
+
+  // Réservation ATOMIQUE côté Firestore : garantit l'unicité même si deux
+  // personnes créent la même référence SAP au même instant sur 2 appareils
+  // différents (le contrôle local ci-dessus ne suffit pas dans ce cas précis,
+  // car chaque appareil ne voit que sa propre copie locale au moment du clic).
+  if(sapChanged && window.fbReserveSAP) {
+    if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Vérification…'; }
+    const reserved = await window.fbReserveSAP(sap);
+    if(!reserved) {
+      if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
+      sapErr.textContent = `🚫 Article ${sap} en double — cette référence vient d'être prise à l'instant sur un autre appareil. Choisissez une autre référence.`;
+      sapErr.style.display = 'block';
+      document.getElementById('art-sap').focus();
+      return;
+    }
+  }
 
   const data = {
     sap, desc: sanitizeInput(desc),
@@ -3003,14 +3047,13 @@ async function saveArticle() {
     photo: currentPhotoUrl
   };
 
-  const saveBtn = document.getElementById('article-save-btn');
-
   if(pendingPhotoBlob) {
     if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Envoi de la photo…'; }
     try {
       data.photo = await uploadPhotoToCloudinary(articleId, pendingPhotoBlob);
     } catch(e) {
       if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
+      if(sapChanged && window.fbReleaseSAP) window.fbReleaseSAP(sap); // libère la réservation, l'enregistrement n'a pas abouti
       alert("Échec de l'envoi de la photo vers Cloudinary. Vérifiez la configuration (cloud name / upload preset) ainsi que votre connexion, puis réessayez.\n\nDétail technique : " + (e && e.message ? e.message : e));
       return;
     }
@@ -3023,6 +3066,7 @@ async function saveArticle() {
     if(data.stock !== ancienStock) {
       logStockMovement(editingArticleId, 'ajustement', data.stock - ancienStock, data.stock, 'Modification manuelle de la fiche article');
     }
+    if(sapChanged && existingArticle && window.fbReleaseSAP) window.fbReleaseSAP(existingArticle.sap); // libère l'ancienne référence, plus utilisée
     addActivity('✏️', `Pièce modifiée : ${desc}`);
   } else {
     data.id = articleId;
@@ -3041,8 +3085,10 @@ async function saveArticle() {
 
 function deleteArticle(id) {
   if(!confirm('Supprimer cette pièce ?')) return;
+  const a = DB.articles.find(x => x.id === id);
   DB.articles = DB.articles.filter(a => a.id !== id);
   save();
+  if(a && window.fbReleaseSAP) window.fbReleaseSAP(a.sap); // libère la référence SAP, redevient disponible
   // Note : la photo éventuelle reste dans la médiathèque Cloudinary — la
   // suppression à distance nécessiterait une clé API secrète, impossible à
   // exposer côté navigateur sans backend. Sans impact pratique vu le volume.
@@ -4237,7 +4283,7 @@ function importArticles(input) {
   }
 }
 
-function processImportData(csvText, fmt) {
+async function processImportData(csvText, fmt) {
   try {
     const lines = csvText.split(/\r?\n/).filter(l => l.trim());
     if(lines.length < 3) { showImportError('Fichier vide ou format incorrect.'); return; }
@@ -4288,14 +4334,14 @@ function processImportData(csvText, fmt) {
 
     // Data starts at row index 2 (skip header + note row)
     const dataLines = lines.slice(2);
-    let created = 0, updated = 0, skipped = 0, errors = [];
+    let created = 0, updated = 0, skipped = 0, doublonsConcurrents = 0, errors = [];
 
-    dataLines.forEach((line, lineIdx) => {
-      if(!line.trim()) return;
+    for (const line of dataLines) {
+      if(!line.trim()) continue;
       const row = parseCSVRow(line);
       const sap = (row[colIdx.sap] || '').trim();
       const desc = (row[colIdx.desc] || '').trim();
-      if(!sap || !desc) { skipped++; return; }
+      if(!sap || !desc) { skipped++; continue; }
 
       const toBool = v => {
         const s = (v||'').toString().trim().toLowerCase();
@@ -4329,6 +4375,10 @@ function processImportData(csvText, fmt) {
         }
         updated++;
       } else {
+        // Réservation atomique du SAP (garantit l'unicité même si une création
+        // manuelle ou un autre import a lieu au même moment sur un autre appareil).
+        const reserved = window.fbReserveSAP ? await window.fbReserveSAP(sap) : true;
+        if(!reserved) { doublonsConcurrents++; continue; }
         article.id = 'a' + Date.now() + Math.random().toString(36).slice(2,6);
         DB.articles.push(article);
         if(article.stock > 0) {
@@ -4336,10 +4386,10 @@ function processImportData(csvText, fmt) {
         }
         created++;
       }
-    });
+    }
 
     save();
-    addActivity('📥', `Import : ${created} créés, ${updated} mis à jour, ${skipped} ignorés`);
+    addActivity('📥', `Import : ${created} créés, ${updated} mis à jour, ${skipped} ignorés${doublonsConcurrents ? ', ' + doublonsConcurrents + ' en doublon (réservés ailleurs)' : ''}`);
 
     const body = document.getElementById('import-body');
     body.innerHTML = `
@@ -4361,6 +4411,7 @@ function processImportData(csvText, fmt) {
           <div style="font-size:12px;color:var(--text2)">Ignorés</div>
         </div>
       </div>
+      ${doublonsConcurrents ? `<div style="background:var(--danger-light);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--danger);margin-bottom:12px">🚫 ${doublonsConcurrents} référence(s) SAP ignorée(s) car réservée(s) au même moment sur un autre appareil.</div>` : ''}
       ${errors.length ? `<div style="background:var(--danger-light);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--danger);max-height:120px;overflow-y:auto">${errors.join('<br>')}</div>` : ''}
     `;
     document.getElementById('import-close-btn').style.display = '';
