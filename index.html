@@ -645,6 +645,7 @@
               <option value="chimique">Chimique</option>
             </select>
           </div>
+          <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
           <button class="btn btn-outline staff-only" onclick="document.getElementById('import-file-input').click()" title="Importer depuis Excel ou CSV">📥 Importer</button>
           <input type="file" id="import-file-input" accept=".xlsx,.csv" style="display:none" onchange="importArticles(this)">
           <button class="btn btn-primary staff-only" onclick="openArticleModal()">+ Ajouter pièce</button>
@@ -1150,6 +1151,22 @@
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-ot')">Annuler</button>
       <button class="btn btn-primary" onclick="confirmDelivery()">Valider la sortie</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCAN CODE-BARRES / QR MODAL -->
+<div class="modal-overlay" id="modal-scan">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <h3>📷 Scanner une pièce</h3>
+      <button class="modal-close" onclick="closeScanModal()">✕</button>
+    </div>
+    <div id="scan-reader" style="width:100%;min-height:260px;border-radius:10px;overflow:hidden;background:#0b1220"></div>
+    <div id="scan-status" style="margin-top:12px;font-size:13px;color:var(--text2);text-align:center">Autorisez l'accès à la caméra pour scanner un code-barres ou QR code (référence SAP).</div>
+    <div id="scan-error" style="display:none;margin-top:10px;padding:10px 14px;background:var(--danger-light);color:var(--danger);border-radius:8px;font-size:13px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeScanModal()">Fermer</button>
     </div>
   </div>
 </div>
@@ -5053,6 +5070,69 @@ async function saveProfile() {
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
+// =============================
+// SCAN CODE-BARRES / QR (recherche rapide d'une pièce par sa référence SAP)
+// =============================
+let scanHtml5QrCode = null;
+let scanActive = false;
+
+function openScanModal() {
+  const statusEl = document.getElementById('scan-status');
+  const errEl = document.getElementById('scan-error');
+  statusEl.style.display = '';
+  statusEl.textContent = 'Autorisez l\'accès à la caméra pour scanner un code-barres ou QR code (référence SAP).';
+  errEl.style.display = 'none';
+  errEl.textContent = '';
+  openModal('modal-scan');
+
+  if(typeof Html5Qrcode === 'undefined') {
+    statusEl.style.display = 'none';
+    errEl.textContent = "Le module de scan n'a pas pu se charger (vérifiez la connexion internet), puis réessayez.";
+    errEl.style.display = 'block';
+    return;
+  }
+
+  scanHtml5QrCode = new Html5Qrcode('scan-reader');
+  scanActive = true;
+  scanHtml5QrCode.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 220, height: 220 } },
+    onScanDecoded,
+    () => {} // échec de décodage image par image : on ignore et on continue à scanner
+  ).then(() => {
+    statusEl.textContent = 'Visez le code-barres ou QR code de la pièce…';
+  }).catch(() => {
+    scanActive = false;
+    statusEl.style.display = 'none';
+    errEl.textContent = "Impossible d'accéder à la caméra. Vérifiez que l'accès à la caméra est autorisé pour ce site dans les réglages du navigateur.";
+    errEl.style.display = 'block';
+  });
+}
+
+function onScanDecoded(decodedText) {
+  if(!scanActive) return; // évite les déclenchements en rafale pendant la fermeture
+  const code = (decodedText || '').trim();
+  const cleanDigits = code.replace(/[^0-9]/g, '');
+  const article = DB.articles.find(a => a.sap === code || (cleanDigits && a.sap === cleanDigits) || a.id === code);
+  if(!article) {
+    document.getElementById('scan-status').textContent = `Aucune pièce trouvée pour ce code (${code}). Continuez à scanner…`;
+    return;
+  }
+  scanActive = false;
+  closeScanModal();
+  openArticleDetail(article.id);
+}
+
+function closeScanModal() {
+  scanActive = false;
+  closeModal('modal-scan');
+  if(scanHtml5QrCode) {
+    const instance = scanHtml5QrCode;
+    scanHtml5QrCode = null;
+    instance.stop().then(() => instance.clear()).catch(() => {});
+  }
+}
+
 function initials(name) {
   return name.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase();
 }
@@ -5416,7 +5496,11 @@ function showNotif(icon, title, msg) {
 
 // Close modal on overlay click
 document.querySelectorAll('.modal-overlay').forEach(el => {
-  el.addEventListener('click', e => { if(e.target === el) el.classList.remove('open'); });
+  el.addEventListener('click', e => {
+    if(e.target !== el) return;
+    if(el.id === 'modal-scan') { closeScanModal(); return; }
+    el.classList.remove('open');
+  });
 });
 
 // Fermer les résultats de recherche globale au clic extérieur
@@ -5729,5 +5813,6 @@ if ('serviceWorker' in navigator) {
 </script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </body>
 </html>
