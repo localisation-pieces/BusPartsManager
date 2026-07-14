@@ -97,7 +97,8 @@
 
   /* ══════════════ APP LAYOUT ══════════════ */
   #app { display: none; min-height: 100vh; }
-  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 244px; background: var(--navy); color: white; display: flex; flex-direction: column; z-index: 100; box-shadow: 2px 0 0 var(--amber); }
+  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 244px; background: var(--navy); color: white; display: flex; flex-direction: column; z-index: 100; box-shadow: 2px 0 0 var(--amber); transition: transform 0.22s ease; }
+  .sidebar.collapsed { transform: translateX(-244px); box-shadow: none; }
   .sidebar-logo { padding: 22px 20px 18px; display: flex; align-items: center; gap: 11px; border-bottom: 1px solid rgba(255,255,255,0.08); }
   .sidebar-logo-icon { width: 38px; height: 38px; background: var(--amber); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; color: var(--navy-deep); }
   .sidebar-logo span { font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: -0.1px; }
@@ -117,7 +118,19 @@
   .btn-logout { margin-top: 10px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.85); border: 1px solid rgba(255,255,255,0.1); width: 100%; padding: 8px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s; }
   .btn-logout:hover { background: rgba(255,255,255,0.14); color: white; }
 
-  .main { margin-left: 244px; padding: 0; min-height: 100vh; }
+  .main { margin-left: 244px; padding: 0; min-height: 100vh; transition: margin-left 0.22s ease; }
+  .main.sidebar-collapsed { margin-left: 0; }
+
+  #sidebar-toggle-btn {
+    position: fixed; top: 22px; left: 232px; z-index: 150;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--navy); color: white; border: 2px solid var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 12px; box-shadow: var(--shadow);
+    transition: left 0.22s ease; padding: 0;
+  }
+  #sidebar-toggle-btn.collapsed { left: 8px; }
+  @media (max-width: 768px) { #sidebar-toggle-btn { display: none; } }
   .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 50; }
   .topbar h2 { font-family: var(--font-display); font-size: 18px; font-weight: 700; flex: 1; color: var(--text); letter-spacing: -0.2px; }
   .content { padding: 28px 32px 60px; max-width: 1400px; }
@@ -545,6 +558,8 @@
       <button class="btn-logout" onclick="doLogout()">Déconnexion</button>
     </div>
   </aside>
+
+  <button id="sidebar-toggle-btn" onclick="toggleSidebar()" title="Afficher/masquer le menu">‹</button>
 
   <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeMobileMenu()"></div>
 
@@ -2292,6 +2307,7 @@ function startApp() {
   loadCart(); // Restaurer le panier sauvegardé de cet utilisateur
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  restoreSidebarState();
   document.getElementById('sidebar-user-name').textContent = currentUser.name;
   document.getElementById('sidebar-user-role').textContent = roleLabel(currentUser.role);
   document.getElementById('sidebar-user-store').textContent = currentUser.magasin ? getMagasinLabel(currentUser.magasin) : 'Tous magasins';
@@ -2362,6 +2378,28 @@ function toggleMobileMenu() {
 function closeMobileMenu() {
   document.querySelector('.sidebar').classList.remove('open');
   document.getElementById('sidebar-backdrop').classList.remove('open');
+}
+
+// Repli du menu latéral (desktop uniquement) — libère de l'espace pour le
+// catalogue, notamment utile avec les photos des pièces. L'état choisi est
+// mémorisé pour rester replié d'une session à l'autre.
+function toggleSidebar() {
+  const collapsed = document.querySelector('.sidebar').classList.toggle('collapsed');
+  document.querySelector('.main').classList.toggle('sidebar-collapsed', collapsed);
+  const btn = document.getElementById('sidebar-toggle-btn');
+  btn.classList.toggle('collapsed', collapsed);
+  btn.textContent = collapsed ? '›' : '‹';
+  try { localStorage.setItem('bpm_sidebar_collapsed', collapsed ? '1' : '0'); } catch(e) {}
+}
+function restoreSidebarState() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('bpm_sidebar_collapsed') === '1'; } catch(e) {}
+  if(!collapsed) return;
+  document.querySelector('.sidebar').classList.add('collapsed');
+  document.querySelector('.main').classList.add('sidebar-collapsed');
+  const btn = document.getElementById('sidebar-toggle-btn');
+  btn.classList.add('collapsed');
+  btn.textContent = '›';
 }
 function navCommandes() {
   navGo(hasPerm('orders') ? 'orders' : 'myorders');
