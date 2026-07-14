@@ -1879,6 +1879,14 @@ window.applyRemoteAuthData = function(data) {
     applyingRemote = false;
   }
   if (typeof migratePasswordsIfNeeded === 'function') migratePasswordsIfNeeded();
+  // Rafraîchit l'écran si l'admin est déjà en train de regarder la page
+  // Administration au moment où une nouvelle demande arrive en direct —
+  // sinon les données se mettent à jour silencieusement sans que rien ne
+  // s'affiche tant qu'on ne quitte/revient pas sur la page.
+  if (typeof currentView !== 'undefined' && currentView === 'admin' && typeof renderAdmin === 'function') {
+    renderAdmin();
+  }
+  if (typeof updateBadges === 'function') updateBadges();
 };
 
 // Première utilisation : le document bpm/auth n'existe pas encore →
