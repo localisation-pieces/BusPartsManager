@@ -498,6 +498,7 @@
       </div>
       <div class="nav-item" onclick="navGo('catalog')" id="nav-catalog" style="display:none">
         <span class="icon">🔧</span> Catalogue pièces
+        <span class="nav-badge" id="catalog-count-badge" style="background:var(--border);color:var(--text2)">0</span>
       </div>
       <div class="nav-item" onclick="navGo('tools')" id="nav-tools" style="display:none">
         <span class="icon">🛠️</span> Outillage
@@ -585,7 +586,7 @@
   </nav>
 
   <main class="main">
-    <div class="topbar">
+    <div class="topbar" id="main-topbar">
       <div id="hamburger-btn" onclick="toggleMobileMenu()">☰</div>
       <div>
         <div id="topbar-greeting" style="font-family:var(--font-display);font-size:17px;font-weight:700;color:var(--text);letter-spacing:-0.2px">Bonjour 👋</div>
@@ -667,7 +668,7 @@
 
       <!-- CATALOG -->
       <div class="view" id="view-catalog">
-        <div class="topbar" style="position:static;border:none;padding:0;margin-bottom:16px;background:transparent;">
+        <div class="topbar" id="catalog-toolbar" style="border:none;padding:12px 0;margin-bottom:16px;background:var(--bg);z-index:40;">
           <div class="search-bar" style="flex:1">
             <span>🔍</span>
             <input type="text" placeholder="Rechercher par description, référence SAP, fournisseur, mots-clés..." oninput="filterArticles()" id="search-input">
@@ -2434,6 +2435,17 @@ function restoreSidebarState() {
   btn.classList.add('collapsed');
   btn.textContent = '›';
 }
+
+// La barre de recherche/filtres du catalogue reste visible en scrollant,
+// juste sous l'en-tête principal (lui-même déjà fixe). L'offset est calculé
+// dynamiquement plutôt que codé en dur, pour rester correct quelle que soit
+// la taille d'écran ou un futur changement de mise en page de l'en-tête.
+function adjustCatalogToolbarSticky() {
+  const header = document.getElementById('main-topbar');
+  const bar = document.getElementById('catalog-toolbar');
+  if(header && bar) bar.style.top = header.offsetHeight + 'px';
+}
+window.addEventListener('resize', adjustCatalogToolbarSticky);
 function navCommandes() {
   navGo(hasPerm('orders') ? 'orders' : 'myorders');
 }
@@ -2714,6 +2726,10 @@ function populateCategorieFilter() {
 }
 
 function filterArticles() {
+  adjustCatalogToolbarSticky();
+  const badge = document.getElementById('catalog-count-badge');
+  if(badge) { badge.textContent = DB.articles.length; badge.style.display = DB.articles.length ? '' : 'none'; }
+
   const q = document.getElementById('search-input').value.toLowerCase();
   const mag = document.getElementById('filter-magasin').value;
   const bus = document.getElementById('filter-bus').value;
@@ -4026,6 +4042,9 @@ function updateBadges() {
   if(ob) { ob.textContent = pendingOrders; ob.style.display = pendingOrders > 0 ? '' : 'none'; }
   if(db) { db.textContent = preparedOrders; db.style.display = preparedOrders > 0 ? '' : 'none'; }
   if(nb) { nb.textContent = unreadNotifs; nb.style.display = unreadNotifs > 0 ? '' : 'none'; }
+
+  const cb = document.getElementById('catalog-count-badge');
+  if(cb) { cb.textContent = DB.articles.length; cb.style.display = DB.articles.length ? '' : 'none'; }
 
   // Bottom nav badges
   const myPendingCount = DB.orders.filter(o => o.agentId === currentUser?.id && (o.status === 'pending' || o.status === 'taken')).length;
