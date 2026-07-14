@@ -635,11 +635,14 @@
               <option value="standard">Standard</option>
               <option value="articule">Articulé</option>
             </select>
+            <select class="filter-select" id="filter-categorie" onchange="filterArticles()">
+              <option value="">Toutes catégories</option>
+            </select>
             <select class="filter-select" id="filter-marque" onchange="filterArticles()">
               <option value="">Toutes marques</option>
             </select>
             <select class="filter-select" id="filter-type" onchange="filterArticles()">
-              <option value="">Toutes catégories</option>
+              <option value="">Caractéristiques</option>
               <option value="serialise">Sérialisé</option>
               <option value="reparable">Réparable</option>
               <option value="chimique">Chimique</option>
@@ -970,7 +973,11 @@
         </div>
         <div class="form-group">
           <label>Description *</label>
-          <input type="text" id="art-desc" placeholder="Description complète">
+          <input type="text" id="art-desc" placeholder="Description complète" oninput="uppercaseInput(this)">
+        </div>
+        <div class="form-group">
+          <label>Catégorie <span style="font-size:11px;color:var(--text3);font-weight:400">(regroupement par organe)</span></label>
+          <select id="art-categorie"><option value="">— Aucune —</option></select>
         </div>
         <div class="form-group">
           <label>Fournisseur</label>
@@ -978,7 +985,7 @@
         </div>
         <div class="form-group">
           <label>Article Fournisseur</label>
-          <input type="text" id="art-fournisseur-ref" placeholder="Référence fournisseur">
+          <input type="text" id="art-fournisseur-ref" placeholder="Référence fournisseur" oninput="uppercaseInput(this)">
         </div>
       </div>
       <div>
@@ -988,11 +995,11 @@
         </div>
         <div class="form-group">
           <label>Emplacement (Allée / Étagère / Casier)</label>
-          <input type="text" id="art-emplacement" placeholder="ex: A3-E2-C5">
+          <input type="text" id="art-emplacement" placeholder="ex: A3-E2-C5" oninput="uppercaseInput(this)">
         </div>
         <div class="form-group">
           <label>Mots-clés (séparés par virgule)</label>
-          <input type="text" id="art-keywords" placeholder="ex: frein, disque, avant">
+          <input type="text" id="art-keywords" placeholder="ex: frein, disque, avant" oninput="uppercaseInput(this)">
         </div>
         <div class="form-group">
           <label>Type de bus</label>
@@ -2511,6 +2518,7 @@ function isToday(ts) {
 function renderCatalog() {
   populateMagasinFilter();
   populateMarqueFilter();
+  populateCategorieFilter();
   filterArticles();
 }
 
@@ -2539,15 +2547,24 @@ function populateMarqueFilter() {
   sel.innerHTML = '<option value="">Toutes marques</option>' + DB.settings.marques.map(m=>`<option value="${m}"${m===current?' selected':''}>${m}</option>`).join('');
 }
 
+function populateCategorieFilter() {
+  const sel = document.getElementById('filter-categorie');
+  if(!sel) return;
+  if(!DB.settings.categories) DB.settings.categories = [];
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Toutes catégories</option>' + DB.settings.categories.map(c=>`<option value="${c}"${c===current?' selected':''}>${c}</option>`).join('');
+}
+
 function filterArticles() {
   const q = document.getElementById('search-input').value.toLowerCase();
   const mag = document.getElementById('filter-magasin').value;
   const bus = document.getElementById('filter-bus').value;
   const type = document.getElementById('filter-type').value;
   const marque = document.getElementById('filter-marque') ? document.getElementById('filter-marque').value : '';
+  const categorie = document.getElementById('filter-categorie') ? document.getElementById('filter-categorie').value : '';
 
   let arts = DB.articles.filter(a => {
-    const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
+    const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.categorie||'')+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
     if(q && !text.includes(q)) return false;
     if(mag && a.magasin !== mag) return false;
     if(bus === 'standard' && !a.busStandard) return false;
@@ -2556,6 +2573,7 @@ function filterArticles() {
     if(type === 'reparable' && !a.reparable) return false;
     if(type === 'chimique' && !a.chimique) return false;
     if(marque && !(a.marquesBus && a.marquesBus.includes(marque))) return false;
+    if(categorie && a.categorie !== categorie) return false;
     return true;
   });
 
@@ -2575,6 +2593,7 @@ function filterArticles() {
       <div class="article-body">
         <div class="article-ref">${escapeHtml(a.sap)}</div>
         <div class="article-name">${highlight(a.desc, q)}</div>
+        ${a.categorie ? `<div style="margin-bottom:6px"><span class="badge" style="background:var(--navy);color:white">${escapeHtml(a.categorie)}</span></div>` : ''}
         ${a.marquesBus && a.marquesBus.length ? `
         <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:7px">
           ${a.marquesBus.map(m=>`<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;background:var(--amber-light);color:var(--amber-dark);border:1px solid var(--amber);border-radius:20px;font-size:11px;font-weight:600">🚌 ${escapeHtml(m)}</span>`).join('')}
@@ -2648,6 +2667,7 @@ function openArticleDetail(id) {
       </div>
       <div>
         <div class="detail-row"><span class="label">Référence SAP</span><span><strong>${a.sap}</strong></span></div>
+        ${a.categorie ? `<div class="detail-row"><span class="label">Catégorie</span><span class="badge" style="background:var(--navy);color:white">${escapeHtml(a.categorie)}</span></div>` : ''}
         <div class="detail-row"><span class="label">Fournisseur</span><span>${escapeHtml(a.fournisseur) || '—'}</span></div>
         <div class="detail-row"><span class="label">Réf. fournisseur</span><span>${escapeHtml(a.fournisseurRef) || '—'}</span></div>
         <div class="detail-row"><span class="label">Magasin</span><span class="badge badge-blue">${escapeHtml(getMagasinLabel(a.magasin))}</span></div>
@@ -2806,6 +2826,9 @@ function openArticleModal(id) {
   // Populate selects
   const fSel = document.getElementById('art-fournisseur');
   fSel.innerHTML = '<option value="">— Sélectionner —</option>' + DB.settings.fournisseurs.map(f=>`<option value="${f}"${a&&a.fournisseur===f?' selected':''}>${f}</option>`).join('');
+  const catSel = document.getElementById('art-categorie');
+  if(!DB.settings.categories) DB.settings.categories = [];
+  catSel.innerHTML = '<option value="">— Aucune —</option>' + DB.settings.categories.map(c=>`<option value="${c}"${a&&a.categorie===c?' selected':''}>${c}</option>`).join('');
   const mSel = document.getElementById('art-magasin');
   mSel.innerHTML = '<option value="">— Sélectionner —</option>' + DB.settings.magasins.map(m=>{
     const code=typeof m==='object'?m.code:m, label=typeof m==='object'?`${m.code} – ${m.nom}`:m;
@@ -2928,6 +2951,15 @@ async function previewImage(input) {
   }
 }
 
+// Transforme la saisie en majuscules au fur et à mesure de la frappe, tout en
+// conservant la position du curseur (sinon il sauterait à la fin du champ à
+// chaque caractère, ce qui gênerait la saisie).
+function uppercaseInput(input) {
+  const pos = input.selectionStart;
+  input.value = input.value.toUpperCase();
+  input.selectionStart = input.selectionEnd = pos;
+}
+
 function validateSAPInput(input) {
   const clean = input.value.replace(/[^0-9]/g, '').slice(0, 8);
   input.value = clean;
@@ -3030,6 +3062,7 @@ async function saveArticle() {
 
   const data = {
     sap, desc: sanitizeInput(desc),
+    categorie: document.getElementById('art-categorie').value,
     fournisseur: document.getElementById('art-fournisseur').value,
     fournisseurRef: sanitizeInput(document.getElementById('art-fournisseur-ref').value),
     magasin,
@@ -4236,6 +4269,7 @@ function saveSetting() {
   renderSettings();
   populateMagasinFilter();
   populateMarqueFilter();
+  populateCategorieFilter();
 }
 
 function deleteSetting(type, idx) {
@@ -4309,6 +4343,7 @@ async function processImportData(csvText, fmt) {
       'ref. fournisseur': 'fournisseurRef',
       'reference': 'fournisseurRef',
       'magasin': 'magasin',
+      'categorie': 'categorie',
       'emplacement': 'emplacement',
       'mots-cles': 'keywords',
       'mots cles': 'keywords',
@@ -4351,6 +4386,7 @@ async function processImportData(csvText, fmt) {
       const article = {
         sap,
         desc,
+        categorie: colIdx.categorie !== undefined ? (row[colIdx.categorie]||'').trim() : '',
         fournisseur: colIdx.fournisseur !== undefined ? (row[colIdx.fournisseur]||'').trim() : '',
         fournisseurRef: colIdx.fournisseurRef !== undefined ? (row[colIdx.fournisseurRef]||'').trim() : '',
         magasin: colIdx.magasin !== undefined ? (row[colIdx.magasin]||'').trim() : '',
