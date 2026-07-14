@@ -370,6 +370,7 @@
       <label for="login-remember" style="font-size:12.5px;color:var(--text2);cursor:pointer;user-select:none">Rester connecté sur cet appareil</label>
     </div>
     <button class="btn btn-primary btn-block" style="margin-top:8px;padding:12px" onclick="doLogin()">Se connecter</button>
+    <p style="text-align:center;margin-top:12px;font-size:12.5px"><button onclick="showForgotPassword()" style="background:none;border:none;color:var(--text3);cursor:pointer;text-decoration:underline">Mot de passe oublié ?</button></p>
     <p style="text-align:center;margin-top:16px;font-size:13px"><button onclick="showSignup()" style="background:none;border:none;color:var(--primary);cursor:pointer;font-weight:600;text-decoration:underline">Créer un compte</button></p>
     <p style="text-align:center;margin-top:16px;font-size:12px;color:var(--text3)">Comptes démo : 00001/admin123 (admin) · 10001/mag123 (magasinier) · 20001/agent123 (agent)</p>
     <p style="text-align:center;margin-top:8px"><button onclick="resetDB()" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;text-decoration:underline">Réinitialiser les données</button></p>
@@ -422,6 +423,36 @@
     <div style="font-size:56px;margin-bottom:16px">⏳</div>
     <h2 style="margin-bottom:10px">Compte en attente</h2>
     <p style="color:var(--text2);font-size:14px;margin-bottom:20px">Votre demande d'inscription a été envoyée. Un administrateur doit valider votre compte avant que vous puissiez vous connecter.</p>
+    <button class="btn btn-outline btn-block" onclick="showLogin()">← Retour à la connexion</button>
+  </div>
+
+  <div class="auth-card" id="forgot-view" style="display:none">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">🚌</div>
+      <div>
+        <h1>BusPartsManager</h1>
+        <span>Mot de passe oublié</span>
+      </div>
+    </div>
+    <h2>Mot de passe oublié</h2>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Indiquez votre matricule : une demande sera envoyée à l'administrateur, qui réinitialisera votre mot de passe et vous communiquera le nouveau.</p>
+    <div class="form-group">
+      <label>Matricule (identifiant)</label>
+      <input type="text" id="forgot-matricule" placeholder="5 chiffres" maxlength="5" inputmode="numeric">
+    </div>
+    <div class="form-group">
+      <label>Message (optionnel)</label>
+      <input type="text" id="forgot-message" placeholder="ex: numéro de téléphone pour être rappelé(e)">
+    </div>
+    <div id="forgot-error" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
+    <button class="btn btn-primary btn-block" id="forgot-submit-btn" style="margin-top:8px;padding:12px" onclick="doForgotPassword()">Envoyer la demande</button>
+    <p style="text-align:center;margin-top:14px"><button onclick="showLogin()" style="background:none;border:none;color:var(--primary);cursor:pointer;font-weight:600;text-decoration:underline">← Retour à la connexion</button></p>
+  </div>
+
+  <div class="auth-card" id="forgot-sent-view" style="display:none;text-align:center">
+    <div style="font-size:56px;margin-bottom:16px">📨</div>
+    <h2 style="margin-bottom:10px">Demande envoyée</h2>
+    <p style="color:var(--text2);font-size:14px;margin-bottom:20px">Votre demande a bien été transmise à l'administrateur. Il réinitialisera votre mot de passe et vous contactera pour vous communiquer le nouveau.</p>
     <button class="btn btn-outline btn-block" onclick="showLogin()">← Retour à la connexion</button>
   </div>
 </div>
@@ -1983,14 +2014,70 @@ function resetDB() {
 function showSignup() {
   document.getElementById('login-view').style.display = 'none';
   document.getElementById('pending-view').style.display = 'none';
+  document.getElementById('forgot-view').style.display = 'none';
+  document.getElementById('forgot-sent-view').style.display = 'none';
   document.getElementById('signup-view').style.display = 'block';
   populateSignupMagasins();
 }
 function showLogin() {
   document.getElementById('signup-view').style.display = 'none';
   document.getElementById('pending-view').style.display = 'none';
+  document.getElementById('forgot-view').style.display = 'none';
+  document.getElementById('forgot-sent-view').style.display = 'none';
   document.getElementById('login-view').style.display = 'block';
 }
+function showForgotPassword() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('forgot-sent-view').style.display = 'none';
+  document.getElementById('forgot-error').style.display = 'none';
+  document.getElementById('forgot-matricule').value = '';
+  document.getElementById('forgot-message').value = '';
+  document.getElementById('forgot-view').style.display = 'block';
+}
+
+async function doForgotPassword() {
+  const matricule = document.getElementById('forgot-matricule').value.replace(/[^0-9]/g,'').slice(0,5);
+  const message = sanitizeInput(document.getElementById('forgot-message').value);
+  const errEl = document.getElementById('forgot-error');
+  errEl.style.display = 'none';
+
+  if(matricule.length !== 5) {
+    errEl.textContent = '⚠️ Veuillez saisir votre matricule (5 chiffres).';
+    errEl.style.display = 'block';
+    return;
+  }
+  const user = DB.users.find(u => u.matricule === matricule);
+  if(!user) {
+    errEl.textContent = `🚫 Aucun compte ne correspond au matricule ${matricule}.`;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.getElementById('forgot-submit-btn');
+  if(btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
+
+  // Comme pour l'inscription, le visiteur n'est pas connecté et n'a donc pas
+  // la base complète en mémoire : on écrit directement et ponctuellement
+  // dans Firestore la notification destinée à l'admin, sans passer par le
+  // mécanisme de synchronisation classique (réservé aux utilisateurs connectés).
+  if (window.fbAppendNotification) {
+    try {
+      await window.fbAppendNotification({
+        id: 'n' + Date.now(),
+        to: 'admin',
+        title: '🔑 Mot de passe oublié',
+        msg: `${user.name} (${matricule}) a demandé la réinitialisation de son mot de passe.${message ? ' Message : ' + message : ''} → Administration > Utilisateurs > Modifier pour lui définir un nouveau mot de passe.`,
+        read: false,
+        time: Date.now()
+      });
+    } catch(e) {}
+  }
+
+  if(btn) { btn.disabled = false; btn.textContent = 'Envoyer la demande'; }
+  document.getElementById('forgot-view').style.display = 'none';
+  document.getElementById('forgot-sent-view').style.display = 'block';
+}
+
 function populateSignupMagasins() {
   const sel = document.getElementById('su-magasin');
   sel.innerHTML = '<option value="">— Sélectionner —</option>' + DB.settings.magasins.map(m=>{
