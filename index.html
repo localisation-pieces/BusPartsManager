@@ -4323,6 +4323,7 @@ function renderAdmin(skipFreshFetch) {
           ${u.role === 'agent' ? `<button class="btn btn-message btn-sm" onclick="openMessageModal('${u.id}')">💬 Message</button>` : ''}
           <button class="btn btn-outline btn-sm" onclick="editUser('${u.id}')">✏️</button>
           <button class="btn btn-sm" style="background:var(--${u.active?'danger':'success'}-light);color:var(--${u.active?'danger':'success'});border:1px solid var(--${u.active?'danger':'success'}-light)" onclick="toggleUser('${u.id}')">${u.active?'Désactiver':'Activer'}</button>
+          <button class="btn btn-sm" style="background:var(--danger-light);color:var(--danger);border:1px solid var(--danger-light)" onclick="deleteUser('${u.id}')" title="Supprimer définitivement">🗑️</button>
         </div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:12px">
@@ -4539,6 +4540,33 @@ async function toggleUser(id) {
   if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
   if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
   renderAdmin();
+}
+
+async function deleteUser(id) {
+  const u = DB.users.find(x => x.id === id);
+  if(!u) return;
+  if(u.id === currentUser?.id) { alert('🚫 Impossible de supprimer votre propre compte.'); return; }
+  const otherAdmins = DB.users.filter(x => x.role === 'admin' && x.id !== id);
+  if(u.role === 'admin' && otherAdmins.length === 0) { alert('🚫 Impossible de supprimer le dernier compte administrateur.'); return; }
+  if(!confirm(`Supprimer définitivement le compte de ${u.name} (#${u.matricule}) ?\n\nCette action est irréversible.`)) return;
+
+  const previousUsers = DB.users;
+  DB.users = DB.users.filter(x => x.id !== id);
+  const ok = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(!ok) {
+    DB.users = previousUsers; // annule si l'enregistrement a échoué
+    alert("🚫 La suppression a échoué (connexion instable). Réessayez.");
+    renderAdmin();
+    return;
+  }
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
+  if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
+  // Libère le matricule côté serveur pour qu'il puisse être réutilisé
+  if(window.fbReleaseMatricule && u.matricule) window.fbReleaseMatricule(u.matricule);
+  renderAdmin();
+  showNotif('🗑️', 'Compte supprimé', u.name);
 }
 
 // =============================
