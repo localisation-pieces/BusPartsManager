@@ -4265,8 +4265,18 @@ function renderAdmin(skipFreshFetch) {
   if(!skipFreshFetch && window.fbGetFreshUsers) {
     window.fbGetFreshUsers().then(freshUsers => {
       if(freshUsers && freshUsers.length) {
-        DB.users = freshUsers;
-        if(typeof currentView !== 'undefined' && currentView === 'admin') renderAdmin(true);
+        // Fusion ADDITIVE uniquement : on ajoute les comptes présents sur le
+        // serveur mais absents localement (ex : nouvelle inscription pas
+        // encore reçue), sans jamais remplacer/écraser un utilisateur déjà
+        // en mémoire — sinon un changement local tout juste fait (ex :
+        // modification d'une autorisation) pourrait être annulé si cette
+        // récupération se termine juste après.
+        const localIds = new Set(DB.users.map(u => u.id));
+        const missing = freshUsers.filter(u => !localIds.has(u.id));
+        if(missing.length) {
+          DB.users = DB.users.concat(missing);
+          if(typeof currentView !== 'undefined' && currentView === 'admin') renderAdmin(true);
+        }
       }
     });
   }
@@ -4339,15 +4349,28 @@ function renderAdmin(skipFreshFetch) {
   }).join('');
 }
 
-function togglePerm(userId, page) {
+async function togglePerm(userId, page) {
   const u = DB.users.find(x => x.id === userId);
   if(!u) return;
   if(!u.perms) u.perms = [];
   const idx = u.perms.indexOf(page);
-  if(idx >= 0) u.perms.splice(idx, 1);
+  const hadPerm = idx >= 0;
+  if(hadPerm) u.perms.splice(idx, 1);
   else u.perms.push(page);
-  save();
-  renderAdmin();
+
+  const ok = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(!ok) {
+    // annule si l'enregistrement a échoué
+    if(hadPerm) u.perms.push(page); else u.perms.splice(u.perms.indexOf(page), 1);
+    alert("🚫 L'enregistrement a échoué (connexion instable). Réessayez.");
+    renderAdmin(true);
+    return;
+  }
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
+  if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
+  renderAdmin(true); // true = ne pas écraser avec une récupération serveur, on vient de sauvegarder
 }
 
 function openAddUserModal() {
