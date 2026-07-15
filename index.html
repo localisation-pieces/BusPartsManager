@@ -4237,6 +4237,23 @@ const PAGE_LABELS = {
 };
 
 function renderAdmin() {
+  (async () => {
+    const box = document.getElementById('admin-diag-box') || (() => {
+      const el = document.createElement('pre');
+      el.id = 'admin-diag-box';
+      el.style.cssText = 'text-align:left;background:#111;color:#0f0;padding:14px;border-radius:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-bottom:16px;max-height:260px;overflow:auto';
+      document.querySelector('#view-admin').prepend(el);
+      return el;
+    })();
+    box.textContent = 'Diagnostic en cours…';
+    if(window.fbCompareLocalVsServer) {
+      const result = await window.fbCompareLocalVsServer(DB.users);
+      box.textContent = 'DIAGNOSTIC ADMIN :\n' + JSON.stringify(result, null, 2);
+    } else {
+      box.textContent = 'fbCompareLocalVsServer indisponible (ancien code encore chargé ?)';
+    }
+  })();
+
   // Section demandes en attente
   const pending = DB.users.filter(u => u.statut === 'en_attente');
   const pendingSection = document.getElementById('pending-users-section');
