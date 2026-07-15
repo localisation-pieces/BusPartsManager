@@ -4849,7 +4849,7 @@ async function processImportData(csvText, fmt) {
 
     // Data starts at row index 2 (skip header + note row)
     const dataLines = lines.slice(2);
-    let created = 0, updated = 0, skipped = 0, errors = [];
+    let created = 0, skipped = 0, errors = [];
 
     for (const line of dataLines) {
       if(!line.trim()) continue;
@@ -4881,15 +4881,12 @@ async function processImportData(csvText, fmt) {
         photo: ''
       };
 
-      // Check duplicate by SAP
+      // Contrôle de doublon par SAP : la pièce existante n'est PLUS écrasée,
+      // elle est simplement ignorée pour ne jamais perdre de données déjà en
+      // place (stock, emplacement, photo...) suite à un import.
       const existing = DB.articles.find(a => a.sap === sap);
       if(existing) {
-        const ancienStock = existing.stock;
-        Object.assign(existing, article);
-        if(existing.stock !== ancienStock) {
-          logStockMovement(existing.id, 'import', existing.stock - ancienStock, existing.stock, 'Import fichier — mise à jour');
-        }
-        updated++;
+        skipped++;
       } else {
         // Import en masse : contrôle de doublon LOCAL uniquement (pas de
         // réservation réseau par ligne, qui rendrait un import de plusieurs
@@ -4907,7 +4904,7 @@ async function processImportData(csvText, fmt) {
     }
 
     save();
-    addActivity('📥', `Import : ${created} créés, ${updated} mis à jour, ${skipped} ignorés`);
+    addActivity('📥', `Import : ${created} créés, ${skipped} ignorés (déjà existants ou incomplets)`);
 
     const body = document.getElementById('import-body');
     body.innerHTML = `
@@ -4915,18 +4912,14 @@ async function processImportData(csvText, fmt) {
         <div style="font-size:48px;margin-bottom:12px">✅</div>
         <div style="font-size:18px;font-weight:600;margin-bottom:16px">Import terminé !</div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
         <div style="background:var(--success-light);border-radius:10px;padding:14px;text-align:center">
           <div style="font-size:28px;font-weight:700;color:var(--success)">${created}</div>
           <div style="font-size:12px;color:var(--success)">Créés</div>
         </div>
-        <div style="background:var(--info-light);border-radius:10px;padding:14px;text-align:center">
-          <div style="font-size:28px;font-weight:700;color:var(--info)">${updated}</div>
-          <div style="font-size:12px;color:var(--info)">Mis à jour</div>
-        </div>
         <div style="background:var(--surface2);border-radius:10px;padding:14px;text-align:center">
           <div style="font-size:28px;font-weight:700;color:var(--text2)">${skipped}</div>
-          <div style="font-size:12px;color:var(--text2)">Ignorés</div>
+          <div style="font-size:12px;color:var(--text2)">Ignorés (SAP déjà existant ou ligne incomplète)</div>
         </div>
       </div>
       ${errors.length ? `<div style="background:var(--danger-light);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--danger);max-height:120px;overflow-y:auto">${errors.join('<br>')}</div>` : ''}
