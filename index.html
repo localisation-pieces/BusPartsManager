@@ -1670,6 +1670,33 @@
     }
   };
 
+  // DIAGNOSTIC : compare le tableau d'utilisateurs actuellement en mémoire
+  // dans ce navigateur (localUsers) avec une lecture forcée depuis le
+  // serveur (sans aucun cache), pour voir précisément où est la différence.
+  window.fbCompareLocalVsServer = async function(localUsers) {
+    try {
+      const snap = await getDocFromServer(AUTH_DOC);
+      const serverUsers = snap.exists() ? (snap.data().users || []) : [];
+      const localIds = new Set((localUsers || []).map(u => u.id));
+      const serverIds = new Set(serverUsers.map(u => u.id));
+      const onlyOnServer = serverUsers.filter(u => !localIds.has(u.id)).map(u => ({ id: u.id, matricule: u.matricule, name: u.name, statut: u.statut }));
+      const onlyLocal = (localUsers || []).filter(u => !serverIds.has(u.id)).map(u => ({ id: u.id, matricule: u.matricule, name: u.name, statut: u.statut }));
+      const serverPendingCount = serverUsers.filter(u => u.statut === 'en_attente').length;
+      const localPendingCount = (localUsers || []).filter(u => u.statut === 'en_attente').length;
+      return {
+        ok: true,
+        localTotal: (localUsers || []).length,
+        serverTotal: serverUsers.length,
+        localPendingCount,
+        serverPendingCount,
+        presentOnServerButNotLocal: onlyOnServer,
+        presentLocalButNotServer: onlyLocal
+      };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) ? e.message : String(e) };
+    }
+  };
+
   // Ajout ciblé d'une notification dans le document complet, sans avoir
   // besoin de l'avoir déjà chargé — utilisé par l'écran d'inscription, avant
   // toute connexion (arrayUnion ajoute sans lire le reste du document).
@@ -4209,6 +4236,26 @@ const PAGE_LABELS = {
 };
 
 function renderAdmin() {
+  // DIAGNOSTIC TEMPORAIRE : compare ce que ce navigateur voit localement vs.
+  // ce qui est réellement sur le serveur à cet instant, pour comprendre
+  // pourquoi les nouvelles inscriptions n'apparaissent pas ici.
+  (async () => {
+    const box = document.getElementById('admin-diag-box') || (() => {
+      const el = document.createElement('pre');
+      el.id = 'admin-diag-box';
+      el.style.cssText = 'text-align:left;background:#111;color:#0f0;padding:14px;border-radius:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-bottom:16px;max-height:260px;overflow:auto';
+      document.querySelector('#view-admin').prepend(el);
+      return el;
+    })();
+    box.textContent = 'Diagnostic en cours…';
+    if(window.fbCompareLocalVsServer) {
+      const result = await window.fbCompareLocalVsServer(DB.users);
+      box.textContent = 'DIAGNOSTIC ADMIN :\n' + JSON.stringify(result, null, 2);
+    } else {
+      box.textContent = 'fbCompareLocalVsServer indisponible (ancien code encore chargé ?)';
+    }
+  })();
+
   // Section demandes en attente
   const pending = DB.users.filter(u => u.statut === 'en_attente');
   const pendingSection = document.getElementById('pending-users-section');
