@@ -2312,7 +2312,14 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
   // admin malgré une écriture qui semblait réussie.
   if(window.fbVerifyOnServer) {
     const verif = await window.fbVerifyOnServer(newUser.id);
-    alert('DIAGNOSTIC :\n' + JSON.stringify(verif, null, 2));
+    const pendingView = document.getElementById('pending-view');
+    const oldDiag = document.getElementById('diag-box');
+    if(oldDiag) oldDiag.remove();
+    const diagBox = document.createElement('pre');
+    diagBox.id = 'diag-box';
+    diagBox.style.cssText = 'text-align:left;background:#111;color:#0f0;padding:14px;border-radius:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-top:16px;max-height:300px;overflow:auto';
+    diagBox.textContent = 'DIAGNOSTIC :\n' + JSON.stringify(verif, null, 2);
+    pendingView.appendChild(diagBox);
   }
 
   DB.users.push(newUser);
