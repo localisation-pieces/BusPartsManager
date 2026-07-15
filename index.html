@@ -1639,6 +1639,23 @@
     }
   };
 
+  // Ajout ATOMIQUE d'un utilisateur au tableau existant (arrayUnion), sans
+  // jamais réécrire le document entier — contrairement à
+  // fbSaveAuthDataImmediate (setDoc avec merge:false), cette méthode ne peut
+  // JAMAIS être écrasée par une autre écriture concurrente (par exemple une
+  // session admin encore ouverte qui sauvegarderait sa propre copie, plus
+  // ancienne, du tableau des utilisateurs au même moment). C'est la méthode
+  // utilisée pour l'inscription, où ce risque est réel.
+  window.fbAddPendingUser = async function(userObj) {
+    try {
+      await updateDoc(AUTH_DOC, { users: arrayUnion(userObj) });
+      return true;
+    } catch (e) {
+      console.warn("Ajout de l'inscription échoué :", e);
+      return false;
+    }
+  };
+
   // Ajout ciblé d'une notification dans le document complet, sans avoir
   // besoin de l'avoir déjà chargé — utilisé par l'écran d'inscription, avant
   // toute connexion (arrayUnion ajoute sans lire le reste du document).
@@ -2260,26 +2277,23 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
     role, magasin, active: false, statut: 'en_attente',
     perms: defaultPerms[role] || []
   };
-  DB.users.push(newUser);
 
-  // Sauvegarde IMMÉDIATE et attendue (pas la version différée de 500ms) :
-  // on ne montre "Compte en attente" qu'une fois la demande vraiment
-  // confirmée côté serveur, pour ne jamais l'afficher puis la perdre si la
-  // page se ferme ou se recharge juste après.
+  // Ajout ATOMIQUE (arrayUnion) plutôt qu'une réécriture complète du
+  // document : garantit que la demande ne peut jamais être perdue à cause
+  // d'une écriture concurrente (par exemple une session admin encore
+  // ouverte quelque part avec une version plus ancienne des utilisateurs).
   if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Envoi de la demande...'; }
-  const ok = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
-    : true;
+  const ok = window.fbAddPendingUser ? await window.fbAddPendingUser(newUser) : false;
   if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer ma demande'; }
 
   if(!ok) {
-    DB.users.pop(); // annule l'ajout local, la demande n'a pas été enregistrée
     if(window.fbReleaseMatricule) window.fbReleaseMatricule(matricule); // libère la réservation pour permettre de réessayer
     errEl.textContent = "🚫 La demande n'a pas pu être enregistrée (connexion instable). Veuillez réessayer.";
     errEl.style.display = 'block';
     return;
   }
 
+  DB.users.push(newUser);
   try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e) {}
   if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
   // Le visiteur n'est pas connecté : il n'a pas la base complète en mémoire,
