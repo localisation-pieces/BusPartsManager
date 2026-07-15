@@ -1698,6 +1698,26 @@
     }
   };
 
+  // Même principe que ci-dessus, pour les réservations de matricule (une
+  // inscription interrompue — par exemple par un bug applicatif au mauvais
+  // moment — peut laisser un matricule "réservé" sans compte correspondant,
+  // ce qui bloquerait à tort toute nouvelle tentative avec ce matricule).
+  window.fbCleanOrphanMatriculeReservations = async function(validMatriculesArray) {
+    try {
+      const validMatricules = new Set(validMatriculesArray);
+      const snap = await getDocs(collection(fsdb, 'matricules'));
+      let removed = 0;
+      for (const d of snap.docs) {
+        if (!validMatricules.has(d.id)) {
+          try { await deleteDoc(doc(fsdb, 'matricules', d.id)); removed++; } catch(e) {}
+        }
+      }
+      return removed;
+    } catch(e) {
+      return 0;
+    }
+  };
+
   startAuthSync();
 </script>
 
@@ -2354,6 +2374,14 @@ function startApp() {
         if(removed > 0) console.log(`🧹 ${removed} réservation(s) SAP orpheline(s) nettoyée(s).`);
       });
     };
+  }
+  // Nettoyage des matricules orphelins (ex: inscription interrompue par un
+  // bug) — DB.users est déjà fiable à ce stade (nécessaire pour la connexion
+  // elle-même), pas besoin d'attendre le chargement du catalogue.
+  if(currentUser && currentUser.role === 'admin' && window.fbCleanOrphanMatriculeReservations) {
+    window.fbCleanOrphanMatriculeReservations(DB.users.map(u => u.matricule)).then(removed => {
+      if(removed > 0) console.log(`🧹 ${removed} réservation(s) de matricule orpheline(s) nettoyée(s).`);
+    });
   }
   document.getElementById('sidebar-user-name').textContent = currentUser.name;
   document.getElementById('sidebar-user-role').textContent = roleLabel(currentUser.role);
