@@ -1669,6 +1669,19 @@
     }
   };
 
+  // Relit les utilisateurs directement depuis le serveur (sans passer par
+  // l'écouteur en direct ni le cache local) — utilisé par la page
+  // Administration pour garantir que les demandes en attente sont toujours
+  // à jour, même si la synchronisation en direct a pris du retard.
+  window.fbGetFreshUsers = async function() {
+    try {
+      const snap = await getDocFromServer(AUTH_DOC);
+      return snap.exists() ? (snap.data().users || null) : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
   // DIAGNOSTIC : relit le document directement depuis le serveur Firestore,
   // en ignorant tout cache local, pour confirmer sans ambiguïté qu'une
   // écriture a bien été durablement enregistrée côté serveur.
@@ -4244,23 +4257,19 @@ const PAGE_LABELS = {
   settings: '🗂️ Paramètres'
 };
 
-function renderAdmin() {
-  (async () => {
-    const box = document.getElementById('admin-diag-box') || (() => {
-      const el = document.createElement('pre');
-      el.id = 'admin-diag-box';
-      el.style.cssText = 'text-align:left;background:#111;color:#0f0;padding:14px;border-radius:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-bottom:16px;max-height:260px;overflow:auto';
-      document.querySelector('#view-admin').prepend(el);
-      return el;
-    })();
-    box.textContent = 'Diagnostic en cours…';
-    if(window.fbCompareLocalVsServer) {
-      const result = await window.fbCompareLocalVsServer(DB.users);
-      box.textContent = 'DIAGNOSTIC ADMIN :\n' + JSON.stringify(result, null, 2);
-    } else {
-      box.textContent = 'fbCompareLocalVsServer indisponible (ancien code encore chargé ?)';
-    }
-  })();
+function renderAdmin(skipFreshFetch) {
+  // Récupère les utilisateurs directement depuis le serveur à chaque
+  // ouverture de cette page — plus fiable que d'attendre l'écouteur en
+  // direct, et garantit que les demandes d'inscription en attente sont
+  // toujours visibles sans délai ni dépendance à un cache local.
+  if(!skipFreshFetch && window.fbGetFreshUsers) {
+    window.fbGetFreshUsers().then(freshUsers => {
+      if(freshUsers && freshUsers.length) {
+        DB.users = freshUsers;
+        if(typeof currentView !== 'undefined' && currentView === 'admin') renderAdmin(true);
+      }
+    });
+  }
 
   // Section demandes en attente
   const pending = DB.users.filter(u => u.statut === 'en_attente');
