@@ -1537,8 +1537,16 @@
       clearTimeout(bootTimer);
       if (snap.exists()) {
         window.applyRemoteAuthData(snap.data());
+      } else if (snap.metadata.fromCache) {
+        // CRITIQUE : un cache local vide (ex. fenêtre de navigation privée
+        // toute neuve) peut signaler "le document n'existe pas" avant même
+        // d'avoir reçu la vraie réponse du serveur. Il ne faut JAMAIS agir
+        // sur cette base — sinon on écraserait les vraies données du serveur
+        // avec les identifiants de démo locaux. On ignore et on attend la
+        // prochaine mise à jour, confirmée celle-là par le serveur.
       } else {
-        // bpm/auth n'existe pas encore. Deux cas possibles :
+        // bpm/auth n'existe pas encore, confirmé par le serveur (pas le
+        // cache). Deux cas possibles :
         // 1) Toute première installation → bpm/database n'existe pas non
         //    plus, on initialise avec les identifiants de démo locaux.
         // 2) Migration depuis l'ancienne version (document unique) → les
@@ -1575,6 +1583,11 @@
     dataUnsub = onSnapshot(DATA_DOC, (snap) => {
       if (snap.exists()) {
         window.applyRemoteData(snap.data());
+      } else if (snap.metadata.fromCache) {
+        // Même précaution que pour bpm/auth : ne jamais réinitialiser sur la
+        // seule foi d'un cache local vide, qui peut signaler à tort "n'existe
+        // pas" avant la vraie confirmation du serveur — sinon on écraserait
+        // tout le catalogue, les commandes, etc.
       } else {
         window.pushLocalDataToFirestore();
       }
@@ -2337,18 +2350,6 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
   // DIAGNOSTIC TEMPORAIRE : vérifie et affiche ce que le serveur voit
   // vraiment, pour comprendre pourquoi la demande ne s'affichait pas côté
   // admin malgré une écriture qui semblait réussie.
-  if(window.fbVerifyOnServer) {
-    const verif = await window.fbVerifyOnServer(newUser.id);
-    const pendingView = document.getElementById('pending-view');
-    const oldDiag = document.getElementById('diag-box');
-    if(oldDiag) oldDiag.remove();
-    const diagBox = document.createElement('pre');
-    diagBox.id = 'diag-box';
-    diagBox.style.cssText = 'text-align:left;background:#111;color:#0f0;padding:14px;border-radius:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-top:16px;max-height:300px;overflow:auto';
-    diagBox.textContent = 'DIAGNOSTIC :\n' + JSON.stringify(verif, null, 2);
-    pendingView.appendChild(diagBox);
-  }
-
   DB.users.push(newUser);
   try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e) {}
   if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
@@ -4236,26 +4237,6 @@ const PAGE_LABELS = {
 };
 
 function renderAdmin() {
-  // DIAGNOSTIC TEMPORAIRE : compare ce que ce navigateur voit localement vs.
-  // ce qui est réellement sur le serveur à cet instant, pour comprendre
-  // pourquoi les nouvelles inscriptions n'apparaissent pas ici.
-  (async () => {
-    const box = document.getElementById('admin-diag-box') || (() => {
-      const el = document.createElement('pre');
-      el.id = 'admin-diag-box';
-      el.style.cssText = 'text-align:left;background:#111;color:#0f0;padding:14px;border-radius:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-bottom:16px;max-height:260px;overflow:auto';
-      document.querySelector('#view-admin').prepend(el);
-      return el;
-    })();
-    box.textContent = 'Diagnostic en cours…';
-    if(window.fbCompareLocalVsServer) {
-      const result = await window.fbCompareLocalVsServer(DB.users);
-      box.textContent = 'DIAGNOSTIC ADMIN :\n' + JSON.stringify(result, null, 2);
-    } else {
-      box.textContent = 'fbCompareLocalVsServer indisponible (ancien code encore chargé ?)';
-    }
-  })();
-
   // Section demandes en attente
   const pending = DB.users.filter(u => u.statut === 'en_attente');
   const pendingSection = document.getElementById('pending-users-section');
