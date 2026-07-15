@@ -1624,6 +1624,21 @@
     }, 500);
   };
 
+  // Version immédiate (non différée), pour les actions ponctuelles et
+  // critiques (ex : inscription) où l'utilisateur peut quitter la page
+  // juste après — attendre la confirmation avant d'afficher un succès évite
+  // de perdre silencieusement la demande si la page se ferme entre-temps.
+  window.fbSaveAuthDataImmediate = async function(data) {
+    if (authSaveTimer) { clearTimeout(authSaveTimer); authSaveTimer = null; }
+    try {
+      await setDoc(AUTH_DOC, data, { merge: false });
+      return true;
+    } catch (e) {
+      console.warn('Sauvegarde immédiate (identifiants) échouée :', e);
+      return false;
+    }
+  };
+
   // Ajout ciblé d'une notification dans le document complet, sans avoir
   // besoin de l'avoir déjà chargé — utilisé par l'écran d'inscription, avant
   // toute connexion (arrayUnion ajoute sans lire le reste du document).
@@ -2239,13 +2254,34 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
 
   const signupSalt = randomSalt();
   const signupPassHash = await hashPassword(pass, signupSalt);
-  DB.users.push({
+  const newUser = {
     id: 'u' + Date.now(),
     login: matricule, passHash: signupPassHash, passSalt: signupSalt, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email:'',
     role, magasin, active: false, statut: 'en_attente',
     perms: defaultPerms[role] || []
-  });
-  save();
+  };
+  DB.users.push(newUser);
+
+  // Sauvegarde IMMÉDIATE et attendue (pas la version différée de 500ms) :
+  // on ne montre "Compte en attente" qu'une fois la demande vraiment
+  // confirmée côté serveur, pour ne jamais l'afficher puis la perdre si la
+  // page se ferme ou se recharge juste après.
+  if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Envoi de la demande...'; }
+  const ok = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer ma demande'; }
+
+  if(!ok) {
+    DB.users.pop(); // annule l'ajout local, la demande n'a pas été enregistrée
+    if(window.fbReleaseMatricule) window.fbReleaseMatricule(matricule); // libère la réservation pour permettre de réessayer
+    errEl.textContent = "🚫 La demande n'a pas pu être enregistrée (connexion instable). Veuillez réessayer.";
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e) {}
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
   // Le visiteur n'est pas connecté : il n'a pas la base complète en mémoire,
   // donc pas moyen de passer par save() classique pour la notification.
   // On l'écrit directement dans Firestore (ajout ciblé, sans lire le reste).
@@ -4320,22 +4356,47 @@ async function saveUserSubmit(actionFn, errEl, matricule) {
   renderAdmin();
 }
 
-function validateUser(id) {
+async function validateUser(id) {
   const u = DB.users.find(x => x.id === id);
   if(!u) return;
+  const previousStatut = u.statut, previousActive = u.active;
   u.statut = 'actif';
   u.active = true;
+  // Sauvegarde immédiate et attendue : on ne veut jamais qu'un admin valide
+  // un compte, voie la confirmation, puis découvre plus tard que ça ne
+  // s'était pas vraiment enregistré (même risque que pour l'inscription).
+  const ok = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(!ok) {
+    u.statut = previousStatut; u.active = previousActive; // annule si échec
+    alert("🚫 La validation n'a pas pu être enregistrée (connexion instable). Réessayez.");
+    renderAdmin();
+    return;
+  }
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
   save();
   renderAdmin();
   showNotif('✅', 'Compte validé', `${u.name} peut maintenant se connecter`);
 }
 
-function refuseUser(id) {
+async function refuseUser(id) {
   const u = DB.users.find(x => x.id === id);
   if(!u) return;
   if(!confirm(`Refuser la demande d'inscription de ${u.name} ?`)) return;
+  const previousStatut = u.statut, previousActive = u.active;
   u.statut = 'refuse';
   u.active = false;
+  const ok = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(!ok) {
+    u.statut = previousStatut; u.active = previousActive;
+    alert("🚫 Le refus n'a pas pu être enregistré (connexion instable). Réessayez.");
+    renderAdmin();
+    return;
+  }
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
   save();
   // Libère le matricule côté serveur pour qu'il puisse être réutilisé par quelqu'un d'autre
   if(window.fbReleaseMatricule && u.matricule) window.fbReleaseMatricule(u.matricule);
