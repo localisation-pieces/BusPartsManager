@@ -1844,6 +1844,7 @@ async function migratePasswordsIfNeeded() {
       }
     }
     save();
+    maybeSaveAuthProjection();
   } finally {
     migratingPasswords = false;
   }
@@ -1950,8 +1951,15 @@ function save() {
   // Le document complet (bpm/database) n'est écrit que si la synchronisation
   // complète a démarré, donc uniquement après connexion.
   if (!applyingRemote && window.fbSaveData) window.fbSaveData(DB);
-  // Le petit document d'identifiants (bpm/auth) est lui toujours tenu à jour.
-  if (!applyingRemote) maybeSaveAuthProjection();
+  // IMPORTANT : le document des utilisateurs (bpm/auth) n'est PLUS sauvegardé
+  // automatiquement ici. Avant, save() étant appelée pour absolument toute
+  // action de l'app (modifier une pièce, un outil, un kit...), la moindre
+  // action déclenchait une réécriture complète des utilisateurs avec la
+  // copie locale du moment — ce qui pouvait silencieusement effacer une
+  // inscription tout juste arrivée d'un autre appareil, si elle n'avait pas
+  // encore été reçue localement. Chaque action qui modifie réellement
+  // DB.users doit désormais appeler explicitement sa propre sauvegarde
+  // (voir saveUserSubmit, toggleUser, validateUser, refuseUser).
 }
 
 let lastAuthProjectionJSON = null;
@@ -4417,9 +4425,7 @@ async function saveUser() {
       return;
     }
     DB.users[idx] = { ...DB.users[idx], ...data };
-    save();
-    closeModal('modal-add-user');
-    renderAdmin();
+    saveUserSubmit(async () => true, errEl, matricule);
   } else {
     const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
@@ -4439,7 +4445,18 @@ async function saveUserSubmit(actionFn, errEl, matricule) {
     errEl.style.display = 'block';
     return;
   }
-  save();
+  // Sauvegarde immédiate et confirmée du document utilisateurs (au lieu de
+  // save() qui écraserait tout le tableau sans confirmation).
+  const saved = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(!saved) {
+    errEl.textContent = "🚫 L'enregistrement a échoué (connexion instable). Réessayez.";
+    errEl.style.display = 'block';
+    return;
+  }
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
+  if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
   closeModal('modal-add-user');
   renderAdmin();
 }
@@ -4496,9 +4513,23 @@ function editPendingUser(id) {
   editUser(id);
 }
 
-function toggleUser(id) {
+async function toggleUser(id) {
   const u = DB.users.find(x => x.id === id);
-  if(u) { u.active = !u.active; save(); renderAdmin(); }
+  if(!u) return;
+  const previousActive = u.active;
+  u.active = !u.active;
+  const ok = window.fbSaveAuthDataImmediate
+    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+    : true;
+  if(!ok) {
+    u.active = previousActive; // annule si l'enregistrement a échoué
+    alert("🚫 L'enregistrement a échoué (connexion instable). Réessayez.");
+    renderAdmin();
+    return;
+  }
+  if (typeof lastAuthProjectionJSON !== 'undefined') lastAuthProjectionJSON = JSON.stringify(DB.users);
+  if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
+  renderAdmin();
 }
 
 // =============================
