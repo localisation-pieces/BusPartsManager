@@ -900,16 +900,6 @@
             <div id="users-list"></div>
           </div>
         </div>
-
-        <div class="admin-section" style="border:2px solid var(--danger)">
-          <div class="admin-section-header" style="background:var(--danger-light);color:var(--danger)">
-            ⚠️ Zone dangereuse
-          </div>
-          <div class="admin-section-body">
-            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Cette action efface <strong>définitivement</strong> tout le catalogue, toutes les commandes et tous les comptes utilisateurs, sur tous les appareils connectés. Réservé aux situations exceptionnelles (ex : remise à zéro complète avant un nouveau déploiement).</p>
-            <button class="btn btn-outline" style="border-color:var(--danger);color:var(--danger)" onclick="resetDBProtected()">🗑️ Réinitialiser toutes les données</button>
-          </div>
-        </div>
       </div>
 
       <!-- PROFIL -->
@@ -2142,33 +2132,6 @@ function restoreCachedFullDataIfAny() {
   if(c.stockMovements) DB.stockMovements = c.stockMovements;
   pendingCachedData = null;
   fullDataLoaded = true;
-}
-
-function resetDBProtected() {
-  if(!currentUser || currentUser.role !== 'admin') {
-    alert('🚫 Action réservée aux administrateurs.');
-    return;
-  }
-  const nbArticles = (DB.articles || []).length;
-  const confirmation = prompt(`⚠️ ATTENTION : ceci efface DÉFINITIVEMENT le catalogue actuel (${nbArticles} pièces), toutes les commandes, et remet les comptes utilisateurs à zéro (seul ton compte admin sera conservé), sur TOUS les appareils connectés.\n\nCette action est IRRÉVERSIBLE.\n\nPour confirmer, tape exactement : SUPPRIMER TOUT`);
-  if(confirmation !== 'SUPPRIMER TOUT') {
-    if(confirmation !== null) alert('Texte incorrect — réinitialisation annulée par sécurité.');
-    return;
-  }
-  // Reconstruit une base réellement vide (et non la copie actuelle en
-  // mémoire, qui contient les vraies données) — seul le compte admin
-  // actuellement connecté est conservé, pour ne pas se retrouver bloqué
-  // dehors après la réinitialisation.
-  const keepAdmin = { ...currentUser };
-  const emptyData = {
-    ...DB,
-    articles: [], orders: [], kits: [], tools: [], loans: [],
-    notifications: [], messages: [], activity: [], stockMovements: []
-  };
-  localStorage.removeItem('bpm_db');
-  if(window.fbSaveData) window.fbSaveData(emptyData);
-  if(window.fbSaveAuthData) window.fbSaveAuthData({ users: [keepAdmin], settings: DB.settings });
-  location.reload();
 }
 
 // =============================
