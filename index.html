@@ -900,6 +900,14 @@
             <div id="users-list"></div>
           </div>
         </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">🛠️ Outils de maintenance du catalogue</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Corrige en une fois le magasin des pièces qui n'ont pas encore "2K – Pike" comme magasin (ex : pièces importées sans magasin renseigné).</p>
+            <button class="btn btn-outline" onclick="fixMissingMagasin()">📍 Corriger le magasin manquant (→ 2K – Pike)</button>
+          </div>
+        </div>
       </div>
 
       <!-- PROFIL -->
@@ -4548,6 +4556,24 @@ async function deleteUser(id) {
   if(window.fbReleaseMatricule && u.matricule) window.fbReleaseMatricule(u.matricule);
   renderAdmin();
   showNotif('🗑️', 'Compte supprimé', u.name);
+}
+
+// Corrige le magasin des pièces qui n'en ont AUCUN de renseigné (import
+// incomplet, ancienne fiche...) — ne touche jamais une pièce qui a déjà un
+// autre magasin défini (ex: 2C – Haren), pour ne pas déplacer à tort de
+// vraies pièces d'un autre dépôt.
+function fixMissingMagasin() {
+  const targetCode = '2K';
+  const toFix = DB.articles.filter(a => !a.magasin || !a.magasin.trim());
+  if(toFix.length === 0) {
+    alert('✅ Toutes les pièces ont déjà un magasin renseigné. Rien à corriger.');
+    return;
+  }
+  if(!confirm(`${toFix.length} pièce(s) sans magasin renseigné vont être mises à jour avec "2K – Pike".\n\nLes pièces ayant déjà un autre magasin (ex: 2C – Haren) ne seront pas touchées.\n\nContinuer ?`)) return;
+  toFix.forEach(a => { a.magasin = targetCode; });
+  save();
+  filterArticles();
+  alert(`✅ ${toFix.length} pièce(s) mise(s) à jour avec le magasin "2K – Pike".`);
 }
 
 // =============================
