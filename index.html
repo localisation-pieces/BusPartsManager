@@ -1532,6 +1532,15 @@
 
   let dataUnsub = null;
   let bootTimedOut = false;
+  // CRITIQUE : passe à true seulement après une confirmation SERVEUR (pas
+  // cache) du document bpm/auth. Tant que ce n'est pas le cas, on continue
+  // d'afficher les données (même si elles viennent du cache, pour ne pas
+  // bloquer l'écran de connexion), mais on refuse tout enregistrement
+  // d'utilisateur (fbSaveUsersOnly) — sinon une copie locale périmée du
+  // cache IndexedDB (ex: après une longue mise en veille du navigateur)
+  // pourrait être réécrite vers le serveur et effacer silencieusement un
+  // compte créé/modifié depuis un autre moment.
+  let authDataFresh = false;
   const BOOT_TIMEOUT_MS = 9000;
 
   function bootError(msg) {
@@ -1562,6 +1571,7 @@
       if (bootTimedOut) return; // trop tard, l'utilisateur a déjà vu l'erreur
       clearTimeout(bootTimer);
       if (snap.exists()) {
+        if (!snap.metadata.fromCache) authDataFresh = true;
         window.applyRemoteAuthData(snap.data());
       } else if (snap.metadata.fromCache) {
         // CRITIQUE : un cache local vide (ex. fenêtre de navigation privée
@@ -1690,6 +1700,15 @@
   // désactiver, supprimer, permissions, valider/refuser une inscription).
   window.fbSaveUsersOnly = async function(users) {
     if (authSaveTimer) { clearTimeout(authSaveTimer); authSaveTimer = null; }
+    if (!authDataFresh) {
+      // Les données locales pourraient venir d'un cache périmé (ex: reprise
+      // après une longue mise en veille) — on refuse d'écrire pour ne
+      // jamais risquer d'effacer un compte créé/modifié entretemps. Les
+      // fonctions appelantes traitent déjà un retour "false" comme un échec
+      // réseau et affichent un message demandant de réessayer.
+      console.warn('Écriture utilisateurs différée : en attente de confirmation serveur.');
+      return false;
+    }
     try {
       await updateDoc(AUTH_DOC, { users });
       return true;
