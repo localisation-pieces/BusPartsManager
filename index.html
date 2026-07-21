@@ -1678,6 +1678,27 @@
     }
   };
 
+  // Écriture CIBLÉE du seul champ "users" (updateDoc), qui ne touche jamais
+  // le champ "settings" du document — contrairement à
+  // fbSaveAuthDataImmediate (setDoc avec merge:false), qui réécrivait tout
+  // le document bpm/auth, y compris settings, avec la copie locale du
+  // moment. Cette copie locale de settings pouvait être en retard sur la
+  // vraie base (bpm/database), ce qui faisait disparaître des catégories ou
+  // des magasins ajoutés entretemps dès qu'un admin validait/activait/
+  // supprimait un utilisateur. Utilisée par toutes les actions qui ne
+  // modifient que la liste des utilisateurs (créer, modifier, activer,
+  // désactiver, supprimer, permissions, valider/refuser une inscription).
+  window.fbSaveUsersOnly = async function(users) {
+    if (authSaveTimer) { clearTimeout(authSaveTimer); authSaveTimer = null; }
+    try {
+      await updateDoc(AUTH_DOC, { users });
+      return true;
+    } catch (e) {
+      console.warn('Sauvegarde des utilisateurs (partielle) échouée :', e);
+      return false;
+    }
+  };
+
   // Ajout ATOMIQUE d'un utilisateur au tableau existant (arrayUnion), sans
   // jamais réécrire le document entier — contrairement à
   // fbSaveAuthDataImmediate (setDoc avec merge:false), cette méthode ne peut
@@ -1979,7 +2000,18 @@ window.applyRemoteAuthData = function(data) {
   applyingRemote = true;
   try {
     if (data.users && data.users.length) DB.users = data.users;
-    if (data.settings) {
+    // IMPORTANT : une fois la base complète chargée (fullDataLoaded), c'est
+    // bpm/database qui fait foi pour "settings" (catégories, magasins...),
+    // synchronisé en direct par sa propre écoute (applyRemoteData). bpm/auth
+    // ne contient qu'une COPIE de settings, qui n'est réécrite qu'à
+    // l'occasion d'une action utilisateur (validation, activation...) et
+    // peut donc être en retard. Avant cette correction, ce bloc écrasait
+    // sans condition DB.settings avec cette copie potentiellement
+    // périmée à chaque déclenchement du listener bpm/auth (ex: nouvelle
+    // inscription), faisant disparaître catégories/magasins ajoutés entre
+    // temps. On ne l'applique donc plus qu'AVANT la connexion (écran de
+    // connexion/inscription), quand bpm/database n'est pas encore chargé.
+    if (data.settings && !fullDataLoaded) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
     }
@@ -4378,8 +4410,8 @@ async function togglePerm(userId, page) {
   if(hadPerm) u.perms.splice(idx, 1);
   else u.perms.push(page);
 
-  const ok = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+  const ok = window.fbSaveUsersOnly
+    ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!ok) {
     // annule si l'enregistrement a échoué
@@ -4500,8 +4532,8 @@ async function saveUserSubmit(actionFn, errEl, matricule) {
   }
   // Sauvegarde immédiate et confirmée du document utilisateurs (au lieu de
   // save() qui écraserait tout le tableau sans confirmation).
-  const saved = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+  const saved = window.fbSaveUsersOnly
+    ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!saved) {
     errEl.textContent = "🚫 L'enregistrement a échoué (connexion instable). Réessayez.";
@@ -4523,8 +4555,8 @@ async function validateUser(id) {
   // Sauvegarde immédiate et attendue : on ne veut jamais qu'un admin valide
   // un compte, voie la confirmation, puis découvre plus tard que ça ne
   // s'était pas vraiment enregistré (même risque que pour l'inscription).
-  const ok = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+  const ok = window.fbSaveUsersOnly
+    ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!ok) {
     u.statut = previousStatut; u.active = previousActive; // annule si échec
@@ -4545,8 +4577,8 @@ async function refuseUser(id) {
   const previousStatut = u.statut, previousActive = u.active;
   u.statut = 'refuse';
   u.active = false;
-  const ok = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+  const ok = window.fbSaveUsersOnly
+    ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!ok) {
     u.statut = previousStatut; u.active = previousActive;
@@ -4571,8 +4603,8 @@ async function toggleUser(id) {
   if(!u) return;
   const previousActive = u.active;
   u.active = !u.active;
-  const ok = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+  const ok = window.fbSaveUsersOnly
+    ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!ok) {
     u.active = previousActive; // annule si l'enregistrement a échoué
@@ -4595,8 +4627,8 @@ async function deleteUser(id) {
 
   const previousUsers = DB.users;
   DB.users = DB.users.filter(x => x.id !== id);
-  const ok = window.fbSaveAuthDataImmediate
-    ? await window.fbSaveAuthDataImmediate({ users: DB.users, settings: DB.settings })
+  const ok = window.fbSaveUsersOnly
+    ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!ok) {
     DB.users = previousUsers; // annule si l'enregistrement a échoué
