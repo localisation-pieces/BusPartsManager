@@ -2913,7 +2913,7 @@ function filterArticles() {
   }
 
   grid.innerHTML = arts.map(a => `
-    <div class="article-card" onclick="openArticleDetail('${a.id}')">
+    <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
       <div class="article-img" ${a.photo ? `onclick="openPhotoZoom('${a.photo}', event)" style="cursor:zoom-in"` : ''}>
         ${a.photo ? `<img src="${a.photo}" alt="${escapeHtml(a.desc)}">` : '⚙️'}
         ${a.stock <= 2 ? `<span class="badge badge-red" style="position:absolute;top:8px;right:8px">Stock faible</span>` : ''}
@@ -6160,6 +6160,10 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
 
 // Fermer les résultats de recherche globale au clic extérieur
 document.addEventListener('click', e => {
+  // Si l'utilisateur est en train de sélectionner du texte (ex: pour copier
+  // une référence SAP), on ne ferme pas le panneau — sinon la sélection est
+  // perdue dès qu'on dépasse le dernier caractère avec la souris.
+  if(window.getSelection && window.getSelection().toString().length > 0) return;
   const box = document.getElementById('global-search-results');
   const input = document.getElementById('global-search-input');
   if(box && !box.contains(e.target) && e.target !== input) box.style.display = 'none';
@@ -6180,7 +6184,7 @@ function globalSearch() {
 
   // Articles
   DB.articles.filter(a => {
-    const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.keywords+' '+a.emplacement+(a.marquesBus||[]).join(' ')).toLowerCase();
+    const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+(a.fournisseurRef||'')+' '+a.keywords+' '+a.emplacement+(a.marquesBus||[]).join(' ')).toLowerCase();
     return text.includes(q);
   }).slice(0,5).forEach(a => results.push({
     type:'article', icon:'⚙️', title:escapeHtml(a.desc), sub:`SAP ${escapeHtml(a.sap)} · ${escapeHtml(getMagasinLabel(a.magasin))} · ${escapeHtml(a.emplacement)}`,
@@ -6227,7 +6231,7 @@ function globalSearch() {
   }
 
   box.innerHTML = results.map(r => `
-    <div onclick="${r.action}" style="display:flex;align-items:flex-start;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+    <div onclick="if(!(window.getSelection&&window.getSelection().toString())){${r.action}}" style="display:flex;align-items:flex-start;gap:10px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
       <span style="font-size:18px;flex-shrink:0;margin-top:1px">${r.icon}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.title}</div>
