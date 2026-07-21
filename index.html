@@ -697,6 +697,9 @@
             <select class="filter-select" id="filter-marque" onchange="filterArticles()">
               <option value="">Toutes marques</option>
             </select>
+            <select class="filter-select" id="filter-fournisseur" onchange="filterArticles()">
+              <option value="">Tous fournisseurs</option>
+            </select>
             <select class="filter-select" id="filter-type" onchange="filterArticles()">
               <option value="">Caractéristiques</option>
               <option value="serialise">Sérialisé</option>
@@ -2835,6 +2838,7 @@ function renderCatalog() {
   populateMagasinFilter();
   populateMarqueFilter();
   populateCategorieFilter();
+  populateFournisseurFilter();
   filterArticles();
 }
 
@@ -2871,6 +2875,14 @@ function populateCategorieFilter() {
   sel.innerHTML = '<option value="">Toutes catégories</option>' + DB.settings.categories.map(c=>`<option value="${c}"${c===current?' selected':''}>${c}</option>`).join('');
 }
 
+function populateFournisseurFilter() {
+  const sel = document.getElementById('filter-fournisseur');
+  if(!sel) return;
+  if(!DB.settings.fournisseurs) DB.settings.fournisseurs = [];
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Tous fournisseurs</option>' + DB.settings.fournisseurs.map(f=>`<option value="${f}"${f===current?' selected':''}>${f}</option>`).join('');
+}
+
 // Attend une courte pause dans la frappe avant de relancer le filtrage —
 // évite de recalculer/re-afficher sur les 2500+ pièces à chaque caractère
 // tapé, ce qui devenait sensible depuis que le catalogue a bien grossi.
@@ -2891,6 +2903,7 @@ function filterArticles() {
   const type = document.getElementById('filter-type').value;
   const marque = document.getElementById('filter-marque') ? document.getElementById('filter-marque').value : '';
   const categorie = document.getElementById('filter-categorie') ? document.getElementById('filter-categorie').value : '';
+  const fournisseur = document.getElementById('filter-fournisseur') ? document.getElementById('filter-fournisseur').value : '';
 
   let arts = DB.articles.filter(a => {
     const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.categorie||'')+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
@@ -2903,6 +2916,7 @@ function filterArticles() {
     if(type === 'chimique' && !a.chimique) return false;
     if(marque && !(a.marquesBus && a.marquesBus.includes(marque))) return false;
     if(categorie && a.categorie !== categorie) return false;
+    if(fournisseur && a.fournisseur !== fournisseur) return false;
     return true;
   });
 
@@ -4755,6 +4769,7 @@ function saveSetting() {
   populateMagasinFilter();
   populateMarqueFilter();
   populateCategorieFilter();
+  populateFournisseurFilter();
 }
 
 function deleteSetting(type, idx) {
