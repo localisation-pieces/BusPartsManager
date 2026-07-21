@@ -172,7 +172,7 @@
   .article-img { height: 160px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 44px; position: relative; overflow: hidden; }
   .article-img img { width: 100%; height: 100%; object-fit: cover; }
   .article-body { padding: 15px; }
-  .article-ref { font-size: 11px; color: var(--text3); font-family: var(--font-mono); font-weight: 500; }
+  .article-ref { font-size: 16px; color: var(--amber-dark); font-family: var(--font-mono); font-weight: 800; letter-spacing: 0.3px; }
   .article-name { font-family: var(--font-display); font-size: 14px; font-weight: 600; margin: 4px 0 9px; color: var(--text); letter-spacing: -0.1px; }
   .article-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 11px; }
   .article-footer { display: flex; gap: 8px; align-items: center; }
@@ -2417,6 +2417,18 @@ function doLogout() {
   DB.notifications = []; DB.messages = []; DB.activity = []; DB.stockMovements = [];
   fullDataLoaded = false;
   try { localStorage.removeItem('bpm_db'); } catch(e){}
+  // Réinitialise les champs de recherche/filtres du catalogue — sinon, comme
+  // la déconnexion ne recharge pas la page, ils gardaient leur valeur d'une
+  // session à l'autre (ex : un filtre laissé rempli visible par le prochain
+  // utilisateur connecté).
+  ['search-input','filter-fournisseur-ref'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  });
+  ['filter-magasin','filter-bus','filter-categorie','filter-marque','filter-fournisseur','filter-type'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.selectedIndex = 0;
+  });
   // Remettre le badge panier à zéro visuellement
   const cc = document.getElementById('cart-count');
   if(cc) cc.textContent = '0';
