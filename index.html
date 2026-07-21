@@ -1116,8 +1116,11 @@
 <!-- ARTICLE DETAIL MODAL -->
 <div class="modal-overlay" id="modal-article-detail">
   <div class="modal" style="width:680px">
-    <div class="modal-header">
-      <h3 id="detail-title">Détail pièce</h3>
+    <div class="modal-header" style="align-items:flex-start">
+      <div>
+        <span id="detail-sap-badge" style="display:inline-block;background:var(--amber-light);color:var(--amber-dark);border:2px solid var(--amber);border-radius:8px;padding:5px 14px;font-family:var(--font-mono);font-weight:800;font-size:20px;letter-spacing:0.5px;margin-bottom:8px"></span>
+        <h3 id="detail-title" style="margin:0"></h3>
+      </div>
       <button class="modal-close" onclick="closeModal('modal-article-detail')">✕</button>
     </div>
     <div id="detail-body"></div>
@@ -3005,6 +3008,7 @@ function openArticleDetail(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
   document.getElementById('detail-title').textContent = a.desc;
+  document.getElementById('detail-sap-badge').textContent = '🔧 SAP ' + a.sap;
   const canEdit = currentUser.role === 'admin' || currentUser.role === 'magasinier';
   document.getElementById('detail-body').innerHTML = `
     <div class="article-detail">
@@ -3012,7 +3016,7 @@ function openArticleDetail(id) {
         ${a.photo ? `<img src="${a.photo}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
       </div>
       <div>
-        <div class="detail-row"><span class="label">Référence SAP</span><span><strong>${a.sap}</strong></span></div>
+        <div class="detail-row"><span class="label">Référence SAP</span><span style="font-family:var(--font-mono);font-weight:800;font-size:19px;color:var(--amber-dark)">${a.sap}</span></div>
         ${a.categorie ? `<div class="detail-row"><span class="label">Catégorie</span><span class="badge" style="background:var(--navy);color:white">${escapeHtml(a.categorie)}</span></div>` : ''}
         <div class="detail-row"><span class="label">Fournisseur</span><span>${escapeHtml(a.fournisseur) || '—'}</span></div>
         <div class="detail-row"><span class="label">Réf. fournisseur</span><span>${escapeHtml(a.fournisseurRef) || '—'}</span></div>
