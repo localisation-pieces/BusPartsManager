@@ -1700,16 +1700,21 @@
   // désactiver, supprimer, permissions, valider/refuser une inscription).
   window.fbSaveUsersOnly = async function(users) {
     if (authSaveTimer) { clearTimeout(authSaveTimer); authSaveTimer = null; }
-    if (!authDataFresh) {
-      // Les données locales pourraient venir d'un cache périmé (ex: reprise
-      // après une longue mise en veille) — on refuse d'écrire pour ne
-      // jamais risquer d'effacer un compte créé/modifié entretemps. Les
-      // fonctions appelantes traitent déjà un retour "false" comme un échec
-      // réseau et affichent un message demandant de réessayer.
-      console.warn('Écriture utilisateurs différée : en attente de confirmation serveur.');
-      return false;
-    }
     try {
+      // Vérification DIRECTE contre le serveur (getDocFromServer, indépendante
+      // de l'écoute en temps réel onSnapshot — celle-ci peut rester bloquée
+      // dans certains environnements réseau/navigateurs sans que les lectures/
+      // écritures directes soient affectées). Si le serveur connaît des
+      // comptes absents du tableau qu'on s'apprête à écrire, on annule pour
+      // ne jamais en perdre un silencieusement.
+      const freshSnap = await getDocFromServer(AUTH_DOC);
+      const freshUsers = freshSnap.exists() ? (freshSnap.data().users || []) : [];
+      const localIds = new Set(users.map(u => u.id));
+      const missing = freshUsers.filter(u => !localIds.has(u.id));
+      if (missing.length > 0) {
+        console.warn('Écriture utilisateurs bloquée : compte(s) serveur absents du tableau local :', missing.map(u => u.matricule));
+        return false;
+      }
       await updateDoc(AUTH_DOC, { users });
       return true;
     } catch (e) {
@@ -4525,7 +4530,9 @@ async function saveUser() {
         if(window.fbReleaseMatricule && oldMatricule) window.fbReleaseMatricule(oldMatricule);
         DB.users[idx] = { ...DB.users[idx], ...data };
         return true;
-      }, errEl, matricule);
+      }, errEl, matricule, async () => {
+        if (window.fbReleaseMatricule) await window.fbReleaseMatricule(matricule);
+      });
       return;
     }
     DB.users[idx] = { ...DB.users[idx], ...data };
@@ -4538,11 +4545,24 @@ async function saveUser() {
       if(!ok) return false;
       DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
       return true;
-    }, errEl, matricule);
+    }, errEl, matricule, async () => {
+      // La réservation vient d'être créée mais l'enregistrement final a
+      // échoué : on la libère immédiatement pour ne pas laisser une
+      // réservation fantôme bloquer toute nouvelle tentative avec ce
+      // matricule (c'est exactement ce qui s'est passé avant ce correctif).
+      if (window.fbReleaseMatricule) await window.fbReleaseMatricule(matricule);
+    });
   }
 }
 
-async function saveUserSubmit(actionFn, errEl, matricule) {
+async function saveUserSubmit(actionFn, errEl, matricule, onFailureCleanup) {
+  // Copie de secours de l'état AVANT toute modification locale (ajout d'un
+  // nouvel utilisateur, changement de matricule...). Si l'enregistrement sur
+  // le serveur échoue ensuite, on restaure exactement cet état : avant ce
+  // correctif, un ajout local qui échouait au niveau serveur restait quand
+  // même en mémoire, créant une fiche "fantôme" qui bloquait toute nouvelle
+  // tentative avec le même matricule (détectée comme "déjà utilisé").
+  const previousUsersSnapshot = DB.users.map(u => ({...u}));
   const ok = await actionFn();
   if(!ok) {
     errEl.textContent = `🚫 Le matricule ${matricule} vient d'être pris. Choisissez-en un autre.`;
@@ -4555,6 +4575,8 @@ async function saveUserSubmit(actionFn, errEl, matricule) {
     ? await window.fbSaveUsersOnly(DB.users)
     : true;
   if(!saved) {
+    DB.users = previousUsersSnapshot;
+    if (onFailureCleanup) { try { await onFailureCleanup(); } catch(e){} }
     errEl.textContent = "🚫 L'enregistrement a échoué (connexion instable). Réessayez.";
     errEl.style.display = 'block';
     return;
