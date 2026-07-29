@@ -1502,6 +1502,11 @@
     collection, getDocs,
     enableIndexedDbPersistence
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import {
+    getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+    setPersistence, browserLocalPersistence, browserSessionPersistence,
+    EmailAuthProvider, reauthenticateWithCredential, updatePassword
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyD7LxL8v6KnJGTGm9nRlBN4tL5724WFdsQ",
@@ -1512,12 +1517,44 @@
     appId: "1:470052325973:web:b861672ecec3ee4cd3a2dc"
   };
 
-  // Un seul système d'authentification : matricule + mot de passe, vérifiés
-  // contre les données synchronisées Firestore (pas de Firebase Auth séparé —
-  // c'était le mélange de 2 systèmes qui posait problème avant).
+  // Authentification : Firebase Authentication (email fictif matricule@buspartsmanager.local
+  // + mot de passe), en remplacement du hachage maison (passHash/passSalt) qui ne
+  // protégeait pas vraiment les données Firestore contre un accès non authentifié.
   const fbApp = initializeApp(firebaseConfig);
   const fsdb  = getFirestore(fbApp);
+  const fbAuth = getAuth(fbApp);
+  const AUTH_DOMAIN_SUFFIX = 'buspartsmanager.local';
+  window.matriculeToEmail = function(matricule) { return `${matricule}@${AUTH_DOMAIN_SUFFIX}`; };
+  window.fbAuth = fbAuth;
+  window.fbSignInWithEmailAndPassword = signInWithEmailAndPassword;
+  window.fbCreateUserWithEmailAndPassword = createUserWithEmailAndPassword;
+  window.fbSignOut = signOut;
+  window.fbOnAuthStateChanged = onAuthStateChanged;
+  window.fbSetPersistence = setPersistence;
+  window.fbBrowserLocalPersistence = browserLocalPersistence;
+  window.fbBrowserSessionPersistence = browserSessionPersistence;
+  window.fbEmailAuthProvider = EmailAuthProvider;
+  window.fbReauthenticateWithCredential = reauthenticateWithCredential;
+  window.fbUpdatePassword = updatePassword;
   try { enableIndexedDbPersistence(fsdb); } catch(e) {}
+
+  // Création de compte via une instance Firebase secondaire : nécessaire car
+  // createUserWithEmailAndPassword connecte automatiquement le nouveau compte
+  // sur l'instance utilisée — sans ça, ça déconnecterait l'admin (ou l'appli
+  // resterait "connectée" au nouveau compte non encore approuvé, lors d'une
+  // inscription). Une fois le compte créé, on se déconnecte immédiatement de
+  // cette instance secondaire, sans toucher à la session principale.
+  let secondaryAppAuth = null;
+  window.fbCreateUserSecondary = async function(email, password) {
+    if (!secondaryAppAuth) {
+      const secondaryApp = initializeApp(firebaseConfig, 'secondaryAuth');
+      secondaryAppAuth = getAuth(secondaryApp);
+    }
+    const cred = await createUserWithEmailAndPassword(secondaryAppAuth, email, password);
+    const uid = cred.user.uid;
+    await signOut(secondaryAppAuth);
+    return uid;
+  };
 
   // DEUX documents séparés, pour ne jamais charger la base complète avant
   // qu'un utilisateur soit connecté :
@@ -1551,9 +1588,9 @@
     if (msg) document.getElementById('fb-boot-error-msg').textContent = msg;
   }
 
-  function showAuthScreenNow() {
+  async function showAuthScreenNow() {
     document.getElementById('fb-boot-screen').style.display = 'none';
-    if (window.tryAutoLogin && window.tryAutoLogin()) return; // déjà reconnecté automatiquement
+    if (window.tryAutoLogin && await window.tryAutoLogin()) return; // déjà reconnecté automatiquement
     document.getElementById('auth-screen').style.display = 'flex';
   }
 
@@ -2377,11 +2414,22 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
     agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','profile']
   };
 
-  const signupSalt = randomSalt();
-  const signupPassHash = await hashPassword(pass, signupSalt);
+  if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Création du compte...'; }
+  let uid;
+  try {
+    uid = await window.fbCreateUserSecondary(window.matriculeToEmail(matricule), pass);
+  } catch(e) {
+    if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer ma demande'; }
+    if (window.fbReleaseMatricule) window.fbReleaseMatricule(matricule);
+    errEl.textContent = (e.code === 'auth/email-already-in-use')
+      ? `🚫 Le matricule ${matricule} est déjà utilisé par un compte existant.`
+      : "🚫 La création du compte a échoué. Veuillez réessayer.";
+    errEl.style.display = 'block';
+    return;
+  }
+
   const newUser = {
-    id: 'u' + Date.now(),
-    login: matricule, passHash: signupPassHash, passSalt: signupSalt, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email:'',
+    id: uid, login: matricule, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email:'',
     role, magasin, active: false, statut: 'en_attente',
     perms: defaultPerms[role] || []
   };
@@ -2424,32 +2472,44 @@ async function doLogin() {
   const login = document.getElementById('login-user').value.trim();
   const pass = document.getElementById('login-pass').value.trim();
   const errEl = document.getElementById('login-error');
-  const candidate = DB.users.find(u => u.login === login);
-  const user = (candidate && candidate.passHash && (await hashPassword(pass, candidate.passSalt)) === candidate.passHash)
-    ? candidate : null;
-  if(!user) {
+  const remember = document.getElementById('login-remember');
+
+  try {
+    await window.fbSetPersistence(window.fbAuth, (remember && remember.checked) ? window.fbBrowserLocalPersistence : window.fbBrowserSessionPersistence);
+    await window.fbSignInWithEmailAndPassword(window.fbAuth, window.matriculeToEmail(login), pass);
+  } catch(e) {
     errEl.textContent = 'Identifiant ou mot de passe incorrect.';
     errEl.style.display = 'block';
+    return;
+  }
+
+  const user = DB.users.find(u => u.login === login);
+  if(!user) {
+    errEl.textContent = 'Compte introuvable — contactez un administrateur.';
+    errEl.style.display = 'block';
+    await window.fbSignOut(window.fbAuth);
     return;
   }
   if(user.statut === 'en_attente') {
     errEl.textContent = '⏳ Votre compte est en attente de validation par un administrateur.';
     errEl.style.display = 'block';
+    await window.fbSignOut(window.fbAuth);
     return;
   }
   if(user.statut === 'refuse') {
     errEl.textContent = '🚫 Votre demande d\'inscription a été refusée. Contactez un administrateur.';
     errEl.style.display = 'block';
+    await window.fbSignOut(window.fbAuth);
     return;
   }
   if(!user.active) {
     errEl.textContent = '🚫 Ce compte est désactivé. Contactez un administrateur.';
     errEl.style.display = 'block';
+    await window.fbSignOut(window.fbAuth);
     return;
   }
   currentUser = user;
   errEl.style.display = 'none';
-  const remember = document.getElementById('login-remember');
   if(remember && remember.checked) {
     try { localStorage.setItem('bpm_session', JSON.stringify({ matricule: user.matricule })); } catch(e){}
   } else {
@@ -2500,23 +2560,29 @@ function doLogout() {
 
 // Reconnexion automatique : appelée par le module Firebase juste avant
 // d'afficher l'écran de connexion, une fois les données synchronisées.
-// Renvoie true si un compte a été reconnecté automatiquement.
+// Vérifie la vraie session Firebase Auth (pas seulement un indicateur local
+// dans localStorage, qui pouvait être trompé) — renvoie une Promise résolue
+// à true si un compte a été reconnecté automatiquement.
 window.tryAutoLogin = function() {
-  try {
-    const raw = localStorage.getItem('bpm_session');
-    if(!raw) return false;
-    const session = JSON.parse(raw);
-    const user = DB.users.find(u => u.matricule === session.matricule);
-    if(!user || user.statut !== 'actif' || !user.active) {
-      localStorage.removeItem('bpm_session');
-      return false;
-    }
-    currentUser = user;
-    restoreCachedFullDataIfAny();
-    window.startFullDataSync && window.startFullDataSync();
-    startApp();
-    return true;
-  } catch(e) { return false; }
+  return new Promise((resolve) => {
+    const unsub = window.fbOnAuthStateChanged(window.fbAuth, (fbUser) => {
+      unsub();
+      if(!fbUser) { resolve(false); return; }
+      const login = (fbUser.email || '').split('@')[0];
+      const user = DB.users.find(u => u.login === login);
+      if(!user || user.statut !== 'actif' || !user.active) {
+        window.fbSignOut(window.fbAuth);
+        try { localStorage.removeItem('bpm_session'); } catch(e){}
+        resolve(false);
+        return;
+      }
+      currentUser = user;
+      restoreCachedFullDataIfAny();
+      window.startFullDataSync && window.startFullDataSync();
+      startApp();
+      resolve(true);
+    });
+  });
 };
 
 function getFirstName(fullName) {
@@ -4497,8 +4563,10 @@ async function saveUser() {
   const errEl = document.getElementById('user-matricule-error');
   errEl.style.display = 'none';
 
-  // Le mot de passe est obligatoire à la création ; en édition, on peut le
-  // laisser vide pour ne pas le changer.
+  // Le mot de passe est obligatoire à la création uniquement — en édition, le
+  // matricule et le mot de passe ne sont plus modifiables ici (sécurité
+  // Firebase Auth : seul l'outil d'administration séparé, admin-tool.js, peut
+  // réinitialiser le mot de passe d'un autre compte).
   if((!editingUserId && !passInput) || !name) { alert('Veuillez remplir tous les champs obligatoires.'); return; }
   if(matricule.length !== 5) {
     errEl.textContent = `⚠️ Le matricule doit comporter exactement 5 chiffres (${matricule.length}/5 saisi).`;
@@ -4513,27 +4581,13 @@ async function saveUser() {
     agent: ['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile']
   };
   const data = { login: matricule, name: sanitizeInput(name), matricule, tel: sanitizeInput(document.getElementById('user-tel').value), email: sanitizeInput(document.getElementById('user-email').value), role, magasin: document.getElementById('user-magasin').value, perms: defaultPerms[role] || [] };
-  if(passInput) {
-    const salt = randomSalt();
-    data.passHash = await hashPassword(passInput, salt);
-    data.passSalt = salt;
-  }
+
   if(editingUserId) {
     const idx = DB.users.findIndex(u => u.id === editingUserId);
-    const dup = DB.users.find(u => (u.login === matricule || u.matricule === matricule) && u.id !== editingUserId);
-    if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    // Si le matricule a changé, on libère l'ancien et réserve le nouveau
     const oldMatricule = DB.users[idx].matricule;
     if(oldMatricule !== matricule) {
-      saveUserSubmit(async () => {
-        const ok = window.fbReserveMatricule ? await window.fbReserveMatricule(matricule) : true;
-        if(!ok) return false;
-        if(window.fbReleaseMatricule && oldMatricule) window.fbReleaseMatricule(oldMatricule);
-        DB.users[idx] = { ...DB.users[idx], ...data };
-        return true;
-      }, errEl, matricule, async () => {
-        if (window.fbReleaseMatricule) await window.fbReleaseMatricule(matricule);
-      });
+      errEl.textContent = `⚠️ Le matricule ne peut plus être modifié une fois le compte créé (sécurité). Utilise l'outil d'administration pour tout autre besoin.`;
+      errEl.style.display = 'block';
       return;
     }
     DB.users[idx] = { ...DB.users[idx], ...data };
@@ -4541,18 +4595,20 @@ async function saveUser() {
   } else {
     const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
+    let uid;
+    try {
+      uid = await window.fbCreateUserSecondary(window.matriculeToEmail(matricule), passInput);
+    } catch(e) {
+      errEl.textContent = (e.code === 'auth/email-already-in-use')
+        ? `🚫 Le matricule ${matricule} est déjà utilisé par un compte existant.`
+        : "🚫 La création du compte a échoué.";
+      errEl.style.display = 'block';
+      return;
+    }
     saveUserSubmit(async () => {
-      const ok = window.fbReserveMatricule ? await window.fbReserveMatricule(matricule) : true;
-      if(!ok) return false;
-      DB.users.push({ id:'u'+Date.now(), ...data, active:true, statut:'actif' });
+      DB.users.push({ id: uid, ...data, active:true, statut:'actif' });
       return true;
-    }, errEl, matricule, async () => {
-      // La réservation vient d'être créée mais l'enregistrement final a
-      // échoué : on la libère immédiatement pour ne pas laisser une
-      // réservation fantôme bloquer toute nouvelle tentative avec ce
-      // matricule (c'est exactement ce qui s'est passé avant ce correctif).
-      if (window.fbReleaseMatricule) await window.fbReleaseMatricule(matricule);
-    });
+    }, errEl, matricule);
   }
 }
 
@@ -5797,12 +5853,6 @@ async function saveProfile() {
 
   // Changement mot de passe (optionnel)
   if(passCurrent || passNew || passConfirm) {
-    const currentHash = await hashPassword(passCurrent, currentUser.passSalt);
-    if(currentHash !== currentUser.passHash) {
-      errEl.textContent = '⚠️ Le mot de passe actuel est incorrect.';
-      errEl.style.display = 'block';
-      return;
-    }
     if(passNew.length < 4) {
       errEl.textContent = '⚠️ Le nouveau mot de passe doit comporter au moins 4 caractères.';
       errEl.style.display = 'block';
@@ -5813,12 +5863,17 @@ async function saveProfile() {
       errEl.style.display = 'block';
       return;
     }
-    const newSalt = randomSalt();
-    const newHash = await hashPassword(passNew, newSalt);
-    DB.users[idx].passHash = newHash;
-    DB.users[idx].passSalt = newSalt;
-    currentUser.passHash = newHash;
-    currentUser.passSalt = newSalt;
+    try {
+      const credential = window.fbEmailAuthProvider.credential(window.matriculeToEmail(currentUser.matricule), passCurrent);
+      await window.fbReauthenticateWithCredential(window.fbAuth.currentUser, credential);
+      await window.fbUpdatePassword(window.fbAuth.currentUser, passNew);
+    } catch(e) {
+      errEl.textContent = (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential')
+        ? '⚠️ Le mot de passe actuel est incorrect.'
+        : '⚠️ Erreur lors du changement de mot de passe.';
+      errEl.style.display = 'block';
+      return;
+    }
   }
 
   save();
