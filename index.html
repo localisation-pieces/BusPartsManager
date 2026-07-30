@@ -434,7 +434,7 @@
       </select>
     </div>
     <div class="form-group"><label>Téléphone</label><input type="tel" id="su-tel" placeholder="ex: +32 470 00 00 00"></div>
-    <div class="form-group"><label>Mot de passe *</label><input type="password" id="su-pass" placeholder="Choisissez un mot de passe"></div>
+    <div class="form-group"><label>Mot de passe *</label><input type="password" id="su-pass" placeholder="6 caractères minimum"></div>
     <div class="form-group"><label>Confirmer le mot de passe *</label><input type="password" id="su-pass2" placeholder="Retapez le mot de passe"></div>
     <div id="signup-error" style="color:var(--danger);font-size:13px;margin-bottom:12px;display:none;"></div>
     <button class="btn btn-primary btn-block" style="margin-top:8px;padding:12px" onclick="doSignup()">Envoyer ma demande</button>
@@ -1271,7 +1271,7 @@
     </div>
     <div class="form-group">
       <label>Mot de passe *</label>
-      <input type="password" id="user-pass" placeholder="mot de passe">
+      <input type="password" id="user-pass" placeholder="6 caractères minimum">
     </div>
     <div class="form-group">
       <label>Nom complet *</label>
@@ -2369,8 +2369,8 @@ function doSignup() {
     document.getElementById('su-matricule').focus();
     return;
   }
-  if(pass.length < 4) {
-    errEl.textContent = '⚠️ Le mot de passe doit comporter au moins 4 caractères.';
+  if(pass.length < 6) {
+    errEl.textContent = '⚠️ Le mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).';
     errEl.style.display = 'block';
     return;
   }
@@ -2423,6 +2423,8 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, pass, 
     if (window.fbReleaseMatricule) window.fbReleaseMatricule(matricule);
     errEl.textContent = (e.code === 'auth/email-already-in-use')
       ? `🚫 Le matricule ${matricule} est déjà utilisé par un compte existant.`
+      : (e.code === 'auth/weak-password')
+      ? '⚠️ Le mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).'
       : "🚫 La création du compte a échoué. Veuillez réessayer.";
     errEl.style.display = 'block';
     return;
@@ -4568,6 +4570,11 @@ async function saveUser() {
   // Firebase Auth : seul l'outil d'administration séparé, admin-tool.js, peut
   // réinitialiser le mot de passe d'un autre compte).
   if((!editingUserId && !passInput) || !name) { alert('Veuillez remplir tous les champs obligatoires.'); return; }
+  if(!editingUserId && passInput.length < 6) {
+    errEl.textContent = '⚠️ Le mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).';
+    errEl.style.display = 'block';
+    return;
+  }
   if(matricule.length !== 5) {
     errEl.textContent = `⚠️ Le matricule doit comporter exactement 5 chiffres (${matricule.length}/5 saisi).`;
     errEl.style.display = 'block';
@@ -4601,6 +4608,8 @@ async function saveUser() {
     } catch(e) {
       errEl.textContent = (e.code === 'auth/email-already-in-use')
         ? `🚫 Le matricule ${matricule} est déjà utilisé par un compte existant.`
+        : (e.code === 'auth/weak-password')
+        ? '⚠️ Le mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).'
         : "🚫 La création du compte a échoué.";
       errEl.style.display = 'block';
       return;
@@ -5853,8 +5862,8 @@ async function saveProfile() {
 
   // Changement mot de passe (optionnel)
   if(passCurrent || passNew || passConfirm) {
-    if(passNew.length < 4) {
-      errEl.textContent = '⚠️ Le nouveau mot de passe doit comporter au moins 4 caractères.';
+    if(passNew.length < 6) {
+      errEl.textContent = '⚠️ Le nouveau mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).';
       errEl.style.display = 'block';
       return;
     }
