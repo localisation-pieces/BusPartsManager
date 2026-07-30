@@ -1624,14 +1624,13 @@
         // avec les identifiants de démo locaux. On ignore et on attend la
         // prochaine mise à jour, confirmée celle-là par le serveur.
       } else {
-        // bpm/auth n'existe pas encore, confirmé par le serveur (pas le
-        // cache). Deux cas possibles :
-        // 1) Toute première installation → bpm/database n'existe pas non
-        //    plus, on initialise avec les identifiants de démo locaux.
-        // 2) Migration depuis l'ancienne version (document unique) → les
-        //    VRAIES données existent déjà dans bpm/database : on initialise
-        //    bpm/auth à partir de celles-ci, pas des identifiants de démo,
-        //    pour ne jamais perdre l'accès des comptes existants.
+        // bpm/auth n'existe pas, confirmé par le serveur (pas le cache).
+        // ATTENTION SÉCURITÉ : on ne réinitialise plus JAMAIS automatiquement
+        // avec les identifiants de démo codés en dur (DB.users) — c'est
+        // exactement ce mécanisme qui, par le passé, a silencieusement écrasé
+        // de vrais comptes créés entre-temps. Si une vraie migration depuis
+        // bpm/database est possible, on la fait ; sinon on arrête tout et on
+        // demande une intervention manuelle plutôt que de deviner.
         try {
           const dataSnap = await getDoc(DATA_DOC);
           if (dataSnap.exists() && dataSnap.data().users && dataSnap.data().users.length) {
@@ -1640,10 +1639,12 @@
             await setDoc(AUTH_DOC, authData);
             window.applyRemoteAuthData(authData);
           } else {
-            window.pushLocalAuthToFirestore();
+            bootError("Le document d'authentification (bpm/auth) est introuvable sur le serveur. Contacte le développeur avant de continuer — ne pas réinitialiser automatiquement pour éviter de perdre des comptes existants.");
+            return;
           }
         } catch (e) {
-          window.pushLocalAuthToFirestore();
+          bootError("Erreur lors de la vérification du document d'authentification. Contacte le développeur.");
+          return;
         }
       }
       if (document.getElementById('fb-boot-screen').style.display !== 'none') {
