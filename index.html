@@ -2051,11 +2051,18 @@ function save() {
 
 let lastAuthProjectionJSON = null;
 function maybeSaveAuthProjection() {
-  if (!window.fbSaveAuthData) return;
+  // Utilise désormais l'écriture SÉCURISÉE (fbSaveUsersOnly, qui vérifie
+  // d'abord le serveur et refuse d'écraser un compte qu'elle ne connaît pas
+  // localement) au lieu de l'ancien fbSaveAuthData (écrasement total sans
+  // aucune vérification) — c'est cet écrasement non protégé qui a
+  // silencieusement effacé des comptes créés entre-temps (ex: juste après
+  // une migration de mots de passe démarrée avant que les vraies données
+  // du serveur n'aient fini de remplacer les données de démo locales).
+  if (!window.fbSaveUsersOnly) return;
   const json = JSON.stringify(DB.users);
   if (json === lastAuthProjectionJSON) return;
   lastAuthProjectionJSON = json;
-  window.fbSaveAuthData({ users: DB.users, settings: DB.settings });
+  window.fbSaveUsersOnly(DB.users);
 }
 
 // Appelé par le module Firebase dès réception du petit document
