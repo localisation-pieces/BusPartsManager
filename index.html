@@ -2309,42 +2309,17 @@ async function doForgotPassword() {
   const btn = document.getElementById('forgot-submit-btn');
   if(btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
 
-  // Récupération automatique : si le compte a un vrai e-mail personnel
-  // (authEmail), Firebase envoie directement un lien de réinitialisation —
-  // aucune intervention de l'admin nécessaire. Les anciens comptes créés
-  // avant cette fonctionnalité (e-mail fictif matricule@buspartsmanager.local)
-  // continuent de passer par une demande manuelle à l'admin.
-  const hasRealEmail = user.authEmail && !user.authEmail.endsWith('@buspartsmanager.local');
-
-  if(hasRealEmail) {
-    try {
-      await window.fbSendPasswordResetEmail(window.fbAuth, user.authEmail);
-      if(btn) { btn.disabled = false; btn.textContent = 'Envoyer la demande'; }
-      document.getElementById('forgot-view').style.display = 'none';
-      document.getElementById('forgot-sent-view').style.display = 'block';
-      document.getElementById('forgot-sent-view').innerHTML =
-        `<div style="text-align:center;padding:20px"><div style="font-size:40px;margin-bottom:12px">📧</div>
-         <h3>E-mail envoyé !</h3>
-         <p>Un lien de réinitialisation a été envoyé à ton adresse e-mail personnelle. Clique dessus pour choisir un nouveau mot de passe.</p>
-         <button class="btn-secondary" onclick="showLogin()" style="margin-top:16px">Retour à la connexion</button></div>`;
-      return;
-    } catch(e) {
-      if(btn) { btn.disabled = false; btn.textContent = 'Envoyer la demande'; }
-      errEl.textContent = "🚫 L'envoi de l'e-mail a échoué. Réessaie, ou contacte un administrateur.";
-      errEl.style.display = 'block';
-      return;
-    }
-  }
-
-  // Repli pour les comptes sans vrai e-mail : notification manuelle à l'admin
-  // (qui devra utiliser l'outil d'administration séparé, admin-tool.js).
+  // Comme pour l'inscription, le visiteur n'est pas connecté et n'a donc pas
+  // la base complète en mémoire : on écrit directement et ponctuellement
+  // dans Firestore la notification destinée à l'admin, sans passer par le
+  // mécanisme de synchronisation classique (réservé aux utilisateurs connectés).
   if (window.fbAppendNotification) {
     try {
       await window.fbAppendNotification({
         id: 'n' + Date.now(),
         to: 'admin',
         title: '🔑 Mot de passe oublié',
-        msg: `${user.name} (${matricule}) a demandé la réinitialisation de son mot de passe.${message ? ' Message : ' + message : ''} → Ce compte n'a pas d'e-mail personnel enregistré : utilise l'outil admin-tool.js (commande "reset") pour lui définir un nouveau mot de passe, puis communique-le-lui directement.`,
+        msg: `${user.name} (${matricule}) a demandé la réinitialisation de son mot de passe.${message ? ' Message : ' + message : ''} → Utilise l'outil admin-tool.js (commande "reset") pour lui définir un nouveau mot de passe, puis communique-le-lui directement.`,
         read: false,
         time: Date.now()
       });
@@ -2453,12 +2428,12 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, email,
   if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Création du compte...'; }
   let uid;
   try {
-    uid = await window.fbCreateUserSecondary(email, pass);
+    uid = await window.fbCreateUserSecondary(window.matriculeToEmail(matricule), pass);
   } catch(e) {
     if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer ma demande'; }
     if (window.fbReleaseMatricule) window.fbReleaseMatricule(matricule);
     errEl.textContent = (e.code === 'auth/email-already-in-use')
-      ? `🚫 Cette adresse e-mail est déjà utilisée par un compte existant.`
+      ? `🚫 Le matricule ${matricule} est déjà utilisé par un compte existant.`
       : (e.code === 'auth/weak-password')
       ? '⚠️ Le mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).'
       : "🚫 La création du compte a échoué. Veuillez réessayer.";
@@ -2467,7 +2442,7 @@ async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, email,
   }
 
   const newUser = {
-    id: uid, login: matricule, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email, authEmail: email,
+    id: uid, login: matricule, name: `${prenom} ${nom.toUpperCase()}`, matricule, tel, email,
     role, magasin, active: false, statut: 'en_attente',
     perms: defaultPerms[role] || []
   };
@@ -2512,22 +2487,16 @@ async function doLogin() {
   const errEl = document.getElementById('login-error');
   const remember = document.getElementById('login-remember');
 
-  // On cherche d'abord la fiche du compte pour savoir quel e-mail Firebase
-  // utiliser : les comptes les plus récents ont un vrai e-mail personnel
-  // (authEmail) qui permet la récupération automatique de mot de passe ; les
-  // anciens comptes (créés avant cette mise à jour) utilisent encore l'e-mail
-  // fictif matricule@buspartsmanager.local.
   const user = DB.users.find(u => u.login === login);
   if(!user) {
     errEl.textContent = 'Identifiant ou mot de passe incorrect.';
     errEl.style.display = 'block';
     return;
   }
-  const authEmail = user.authEmail || window.matriculeToEmail(login);
 
   try {
     await window.fbSetPersistence(window.fbAuth, (remember && remember.checked) ? window.fbBrowserLocalPersistence : window.fbBrowserSessionPersistence);
-    await window.fbSignInWithEmailAndPassword(window.fbAuth, authEmail, pass);
+    await window.fbSignInWithEmailAndPassword(window.fbAuth, window.matriculeToEmail(login), pass);
   } catch(e) {
     errEl.textContent = 'Identifiant ou mot de passe incorrect.';
     errEl.style.display = 'block';
@@ -4648,14 +4617,12 @@ async function saveUser() {
   } else {
     const dup = DB.users.find(u => u.login === matricule || u.matricule === matricule);
     if(dup) { errEl.textContent = `🚫 Le matricule ${matricule} est déjà utilisé par ${dup.name}.`; errEl.style.display = 'block'; return; }
-    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email);
-    const authEmail = looksLikeEmail ? data.email : window.matriculeToEmail(matricule);
     let uid;
     try {
-      uid = await window.fbCreateUserSecondary(authEmail, passInput);
+      uid = await window.fbCreateUserSecondary(window.matriculeToEmail(matricule), passInput);
     } catch(e) {
       errEl.textContent = (e.code === 'auth/email-already-in-use')
-        ? `🚫 Cette adresse (ou ce matricule) est déjà utilisée par un compte existant.`
+        ? `🚫 Le matricule ${matricule} est déjà utilisé par un compte existant.`
         : (e.code === 'auth/weak-password')
         ? '⚠️ Le mot de passe doit comporter au moins 6 caractères (obligatoire pour Firebase).'
         : "🚫 La création du compte a échoué.";
@@ -4663,7 +4630,7 @@ async function saveUser() {
       return;
     }
     saveUserSubmit(async () => {
-      DB.users.push({ id: uid, ...data, authEmail, active:true, statut:'actif' });
+      DB.users.push({ id: uid, ...data, active:true, statut:'actif' });
       return true;
     }, errEl, matricule);
   }
