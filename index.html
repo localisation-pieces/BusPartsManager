@@ -919,6 +919,17 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">💾 Sauvegarde</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Exporte toutes les données de l'application (utilisateurs, pièces, commandes, outils...) dans un fichier JSON,
+              en cas de besoin de restauration ou de vérification. Les mots de passe ne sont jamais inclus (gérés uniquement par Firebase).
+            </p>
+            <button class="btn btn-outline" onclick="exportBackupJSON()">💾 Exporter une sauvegarde complète (JSON)</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">🛠️ Outils de maintenance du catalogue</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Corrige en une fois le magasin des pièces qui n'ont pas encore "2K – Pike" comme magasin (ex : pièces importées sans magasin renseigné).</p>
@@ -4831,6 +4842,46 @@ function fixMissingMagasin() {
   save();
   filterArticles();
   alert(`✅ ${toFix.length} pièce(s) mise(s) à jour avec le magasin "2K – Pike".`);
+}
+
+// ---------- Sauvegarde globale ----------
+function exportBackupJSON() {
+  try {
+    const backup = {
+      exporteLe: new Date().toISOString(),
+      application: 'BusPartsManager',
+      // Les mots de passe ne sont jamais stockés dans ces données (gérés
+      // uniquement par Firebase Authentication) — rien à exclure ici.
+      utilisateurs: (DB.users || []).map(u => ({
+        matricule: u.matricule, name: u.name, role: u.role, magasin: u.magasin,
+        tel: u.tel, email: u.email, active: u.active, statut: u.statut
+      })),
+      articles: DB.articles || [],
+      kits: DB.kits || [],
+      outils: DB.tools || [],
+      commandes: DB.orders || [],
+      prets: DB.loans || [],
+      magasins: (DB.settings && DB.settings.magasins) || [],
+      fournisseurs: (DB.settings && DB.settings.fournisseurs) || [],
+      categories: (DB.settings && DB.settings.categories) || [],
+      marques: (DB.settings && DB.settings.marques) || []
+    };
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sauvegarde-buspartsmanager-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    if(typeof showToast === 'function') showToast('✅ Sauvegarde exportée', 'success');
+    else alert('✅ Sauvegarde exportée');
+  } catch(e) {
+    console.error(e);
+    alert('🚫 Erreur lors de la sauvegarde : ' + e.message);
+  }
 }
 
 // =============================
