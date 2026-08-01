@@ -2022,7 +2022,8 @@ const DB = {
     { id:'t3', code:'OUT-003', nom:'Extracteur de roulement', marque:'KUKKO', emplacement:'Z2-E1-C2', magasin:'2C', keywords:'extracteur roulement demontage', quantite:3, photo:'' },
   ],
   loans: [],
-  messages: []
+  messages: [],
+  carts: {}
 };
 
 let currentUser = null;
@@ -2160,6 +2161,7 @@ window.applyRemoteData = function(data) {
     if(data.messages) DB.messages = data.messages;
     if(data.activity) DB.activity = data.activity;
     if(data.stockMovements) DB.stockMovements = data.stockMovements;
+    if(data.carts) DB.carts = data.carts;
     if(data.settings) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
@@ -2168,6 +2170,7 @@ window.applyRemoteData = function(data) {
     if (currentUser) {
       const updated = DB.users.find(u => u.id === currentUser.id);
       if (updated) currentUser = updated;
+      syncCartFromRemote();
     }
     try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){}
     // Si l'app est déjà affichée, on rafraîchit l'écran courant pour refléter
@@ -2196,19 +2199,52 @@ window.pushLocalDataToFirestore = function() {
 function saveCart() {
   if(!currentUser) return;
   try { localStorage.setItem('bpm_cart_' + currentUser.id, JSON.stringify(cart)); } catch(e){}
+  // Synchronisation multi-appareils : le panier de CHAQUE utilisateur est
+  // rangé séparément dans DB.carts (une clé par matricule/uid), donc aucun
+  // risque de mélanger les paniers de deux personnes différentes. Cette
+  // partie de DB.carts est envoyée avec le reste des données de l'appli
+  // (voir save()), jamais avec les comptes utilisateurs (bpm/auth) — donc
+  // aucun risque de retoucher au système qu'on vient de sécuriser.
+  if(!DB.carts) DB.carts = {};
+  DB.carts[currentUser.id] = cart;
+  save();
 }
 
 function loadCart() {
   if(!currentUser) { cart = []; return; }
   try {
+    // Priorité aux données synchronisées (le panier a pu être modifié depuis
+    // un autre appareil) ; le stockage local ne sert que de repli si rien
+    // n'est encore arrivé de Firestore (ex: tout premier chargement, hors-ligne).
+    const remote = DB.carts && DB.carts[currentUser.id];
     const saved = localStorage.getItem('bpm_cart_' + currentUser.id);
-    cart = saved ? JSON.parse(saved) : [];
+    cart = remote ? remote : (saved ? JSON.parse(saved) : []);
     // Nettoyer les articles qui n'existent plus en stock
     cart = cart.filter(c => {
       const a = DB.articles.find(x => x.id === c.id);
       return a && a.stock > 0;
     });
   } catch(e) { cart = []; }
+}
+
+// Reflète en direct, sur cet appareil, un panier modifié depuis un autre
+// appareil connecté avec le même compte (ex: ajout depuis le téléphone,
+// visible immédiatement sur le PC). N'écrase jamais le panier d'un AUTRE
+// utilisateur — chacun ne lit que sa propre clé dans DB.carts.
+function syncCartFromRemote() {
+  if(!currentUser || !DB.carts) return;
+  const remote = DB.carts[currentUser.id];
+  if(!remote) return;
+  const remoteJSON = JSON.stringify(remote);
+  if(remoteJSON === JSON.stringify(cart)) return;
+  cart = remote.filter(c => {
+    const a = DB.articles.find(x => x.id === c.id);
+    return a && a.stock > 0;
+  });
+  updateCartBadge();
+  if(document.getElementById('view-cart') && document.getElementById('view-cart').classList.contains('active')) {
+    renderCartView();
+  }
 }
 migratePasswordsIfNeeded();
 
