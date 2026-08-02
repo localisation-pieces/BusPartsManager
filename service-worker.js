@@ -1,46 +1,29 @@
-const CACHE_NAME = 'buspartsmanager-v2';
-const APP_SHELL = [
-  './index.html',
-  './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-512.png'
-];
+// Ce fichier n'existait plus sur le serveur, mais un ancien service worker
+// (enregistré il y a plusieurs jours, avant qu'on retravaille l'appli) est
+// resté actif sur certains appareils — il continuait à servir une VERSION
+// EN CACHE, ancienne, de l'appli, sans jamais se mettre à jour, quel que
+// soit le contenu réellement présent sur GitHub. C'est ce qui expliquait
+// que les corrections récentes (menu mobile, filtres, grille...)
+// n'apparaissaient jamais, malgré le fichier bien remplacé sur GitHub.
+//
+// Ce nouveau service-worker.js est un "interrupteur" : il supprime tous les
+// anciens caches, puis se désinstalle lui-même définitivement. Après son
+// passage, l'appli n'utilise plus AUCUN service worker — chaque
+// rechargement va chercher la vraie version en ligne, comme n'importe quel
+// site web classique. Rien ne doit être modifié dans ce fichier après coup.
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
-  );
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
-});
-
-// Stratégie "réseau d'abord" pour les fichiers de l'app : on veut toujours la
-// dernière version en ligne (fini les vieilles versions bloquées en cache).
-// Si le réseau est indisponible, on retombe sur le cache local (mode hors-ligne).
-// Les requêtes vers Firebase/Firestore ne sont JAMAIS interceptées : elles
-// passent directement au réseau, Firestore gère lui-même son propre cache.
-self.addEventListener('fetch', (event) => {
-  const url = event.request.url;
-  if (url.includes('firestore.googleapis.com') || url.includes('firebaseio.com') || url.includes('googleapis.com')) {
-    return; // laisser passer, ne pas intercepter
-  }
-  if (event.request.method !== 'GET') return;
-
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+      .then(() => self.registration.unregister())
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then((clients) => {
+        clients.forEach((client) => client.navigate(client.url));
       })
-      .catch(() => caches.match(event.request))
   );
 });
