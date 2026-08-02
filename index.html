@@ -281,6 +281,15 @@
   .ot-input input:focus { border-color: var(--navy); background: var(--surface); }
 
   /* ══════════════ RESPONSIVE ══════════════ */
+  /* Règles "état par défaut" (bureau) placées AVANT le bloc @media mobile :
+     en CSS, à spécificité égale, c'est l'ordre d'apparition qui décide.
+     Ces deux règles étaient avant placées APRÈS le bloc mobile, ce qui les
+     faisait gagner en toutes circonstances (y compris sur téléphone) et
+     cachait silencieusement le bouton menu ☰ et la barre de navigation du
+     bas sur mobile, malgré le bloc mobile déjà correctement écrit. */
+  #hamburger-btn { display: none; width: 36px; height: 36px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); align-items: center; justify-content: center; font-size: 17px; cursor: pointer; margin-right: 10px; flex-shrink: 0; color: var(--text); }
+  .bottom-nav { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 62px; background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -2px 10px rgba(11,37,69,0.06); z-index: 200; align-items: stretch; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom); }
+
   @media (max-width: 768px) {
     .sidebar { width: 244px; transform: translateX(-100%); transition: transform 0.22s ease; box-shadow: none; z-index: 300; }
     .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-lg); }
@@ -291,18 +300,24 @@
     .article-detail { grid-template-columns: 1fr; }
     .topbar { padding: 14px 18px; }
     .content { padding: 18px 18px 60px; padding-bottom: 84px; }
-    .search-bar { display: none; }
     #hamburger-btn { display: flex; }
     .bottom-nav { display: flex; }
     .sidebar-backdrop.open { display: block; }
+    /* Filtres repliés par défaut sur mobile : ça évite d'avoir 7 listes
+       déroulantes empilées avant même de voir la première pièce. Un bouton
+       "Filtres" (ajouté dans le HTML) permet de les afficher à la demande.
+       La barre de recherche, elle, reste toujours visible : c'est le moyen
+       le plus rapide de trouver une pièce sur téléphone. */
+    .filter-bar { display: none; width: 100%; margin-top: 10px; }
+    .filter-bar.open { display: flex; }
+    .filter-select, #filter-fournisseur-ref { flex: 1 1 45%; min-width: 130px; }
+    #mobile-filter-toggle { display: flex; }
   }
 
-  #hamburger-btn { display: none; width: 36px; height: 36px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); align-items: center; justify-content: center; font-size: 17px; cursor: pointer; margin-right: 10px; flex-shrink: 0; color: var(--text); }
   .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(11,37,69,0.35); z-index: 250; }
   .sidebar-close { display: none; }
   @media (max-width: 768px) { .sidebar-close { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #fff; cursor: pointer; font-size: 15px; } }
 
-  .bottom-nav { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 62px; background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -2px 10px rgba(11,37,69,0.06); z-index: 200; align-items: stretch; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom); }
   .bn-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; position: relative; cursor: pointer; color: var(--text3); }
   .bn-item.active { color: var(--navy); }
   .bn-icon { font-size: 19px; line-height: 1; }
@@ -316,6 +331,8 @@
 
   .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
   .filter-select { padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: 13px; font-family: var(--font-body); color: var(--text); background: var(--surface); outline: none; cursor: pointer; transition: border-color 0.15s; }
+  #mobile-filter-toggle { display: none; align-items: center; gap: 6px; padding: 9px 14px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface); cursor: pointer; white-space: nowrap; }
+  #mobile-filter-toggle.active { background: var(--navy); color: #fff; border-color: var(--navy); }
   .filter-select:focus { border-color: var(--navy); }
 
   .qty-control { display: flex; align-items: center; gap: 8px; }
@@ -684,7 +701,8 @@
             <span>🔍</span>
             <input type="text" placeholder="Rechercher par description, référence SAP, fournisseur, mots-clés..." oninput="debouncedFilterArticles()" id="search-input">
           </div>
-          <div class="filter-bar" style="margin:0;gap:8px;">
+          <button id="mobile-filter-toggle" onclick="toggleMobileFilters('catalog-filter-bar', this)">🔽 Filtres</button>
+          <div class="filter-bar" id="catalog-filter-bar" style="margin:0;gap:8px;">
             <select class="filter-select" id="filter-magasin" onchange="filterArticles()">
               <option value="">Tous les magasins</option>
             </select>
@@ -2833,6 +2851,18 @@ function closeMobileMenu() {
 // Repli du menu latéral (desktop uniquement) — libère de l'espace pour le
 // catalogue, notamment utile avec les photos des pièces. L'état choisi est
 // mémorisé pour rester replié d'une session à l'autre.
+// Affiche/masque le panneau de filtres sur mobile (repliés par défaut pour
+// ne pas pousser tout le contenu utile hors de l'écran au premier chargement).
+function toggleMobileFilters(barId, btn) {
+  const bar = document.getElementById(barId);
+  if(!bar) return;
+  const isOpen = bar.classList.toggle('open');
+  if(btn) {
+    btn.classList.toggle('active', isOpen);
+    btn.textContent = isOpen ? '🔼 Filtres' : '🔽 Filtres';
+  }
+}
+
 function toggleSidebar() {
   const collapsed = document.querySelector('.sidebar').classList.toggle('collapsed');
   document.querySelector('.main').classList.toggle('sidebar-collapsed', collapsed);
