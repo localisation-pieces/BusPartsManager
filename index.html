@@ -312,6 +312,19 @@
     .filter-bar.open { display: flex; }
     .filter-select, #filter-fournisseur-ref { flex: 1 1 45%; min-width: 130px; }
     #mobile-filter-toggle { display: flex; }
+
+    /* 2 pièces par ligne plutôt qu'une seule interminable colonne — la carte
+       est resserrée en conséquence (image plus petite, textes réduits, moins
+       d'espace perdu) pour rester lisible à cette largeur. */
+    .article-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .article-img { height: 92px; font-size: 28px; }
+    .article-body { padding: 9px; }
+    .article-ref { font-size: 11.5px; }
+    .article-name { font-size: 12px; margin: 3px 0 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .article-tags { gap: 3px; margin-bottom: 7px; }
+    .article-tags .badge { font-size: 9px; padding: 2px 5px; }
+    .article-location { display: none; } /* trop long pour tenir sur une carte à moitié moins large */
+    .article-footer .badge { font-size: 9.5px; padding: 3px 6px; }
   }
 
   .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(11,37,69,0.35); z-index: 250; }
