@@ -1648,7 +1648,7 @@
   // pourrait être réécrite vers le serveur et effacer silencieusement un
   // compte créé/modifié depuis un autre moment.
   let authDataFresh = false;
-  const BOOT_TIMEOUT_MS = 9000;
+  const BOOT_TIMEOUT_MS = 20000;
 
   function bootError(msg) {
     document.getElementById('fb-boot-icon').textContent = '⚠️';
@@ -1667,7 +1667,7 @@
   // clairement l'utilisateur au lieu de rester bloqué indéfiniment.
   const bootTimer = setTimeout(() => {
     bootTimedOut = true;
-    bootError('Le serveur ne répond pas après 9 secondes. Vérifiez votre connexion internet, ou réessayez.');
+    bootError('Le serveur ne répond pas après 20 secondes. Vérifiez votre connexion internet, ou réessayez.');
   }, BOOT_TIMEOUT_MS);
 
   // Chargement NON-bloquant du petit document d'authentification seulement :
@@ -1675,7 +1675,17 @@
   // base complète n'est pas demandée à ce stade.
   function startAuthSync() {
     onSnapshot(AUTH_DOC, async (snap) => {
-      if (bootTimedOut) return; // trop tard, l'utilisateur a déjà vu l'erreur
+      if (bootTimedOut) {
+        // La connexion a fini par répondre, juste après le délai d'attente —
+        // plutôt que d'ignorer cette réponse tardive (ce qui obligeait avant
+        // à recharger manuellement la page, parfois plusieurs fois de suite),
+        // on efface l'erreur et on continue normalement : aucune raison de
+        // pénaliser une connexion simplement un peu lente.
+        bootTimedOut = false;
+        document.getElementById('fb-boot-error').style.display = 'none';
+        document.getElementById('fb-boot-screen').style.display = 'flex';
+        document.getElementById('fb-boot-text').style.display = 'block';
+      }
       clearTimeout(bootTimer);
       if (snap.exists()) {
         if (!snap.metadata.fromCache) authDataFresh = true;
