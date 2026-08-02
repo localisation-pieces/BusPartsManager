@@ -289,6 +289,9 @@
      bas sur mobile, malgré le bloc mobile déjà correctement écrit. */
   #hamburger-btn { display: none; width: 36px; height: 36px; border-radius: 8px; border: 1.5px solid var(--border); background: var(--surface); align-items: center; justify-content: center; font-size: 17px; cursor: pointer; margin-right: 10px; flex-shrink: 0; color: var(--text); }
   .bottom-nav { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 62px; background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -2px 10px rgba(11,37,69,0.06); z-index: 200; align-items: stretch; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom); }
+  .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+  #mobile-filter-toggle { display: none; align-items: center; gap: 6px; padding: 9px 14px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface); cursor: pointer; white-space: nowrap; }
+  #mobile-filter-toggle.active { background: var(--navy); color: #fff; border-color: var(--navy); }
 
   @media (max-width: 768px) {
     .sidebar { width: 244px; transform: translateX(-100%); transition: transform 0.22s ease; box-shadow: none; z-index: 300; }
@@ -342,10 +345,7 @@
   .empty-state .empty-icon { font-size: 44px; margin-bottom: 14px; opacity: 0.5; }
   .empty-state p { font-size: 14px; font-weight: 500; }
 
-  .filter-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
   .filter-select { padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: 13px; font-family: var(--font-body); color: var(--text); background: var(--surface); outline: none; cursor: pointer; transition: border-color 0.15s; }
-  #mobile-filter-toggle { display: none; align-items: center; gap: 6px; padding: 9px 14px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface); cursor: pointer; white-space: nowrap; }
-  #mobile-filter-toggle.active { background: var(--navy); color: #fff; border-color: var(--navy); }
   .filter-select:focus { border-color: var(--navy); }
 
   .qty-control { display: flex; align-items: center; gap: 8px; }
