@@ -320,7 +320,7 @@
     /* 2 pièces par ligne plutôt qu'une seule interminable colonne — la carte
        est resserrée en conséquence (image plus petite, textes réduits, moins
        d'espace perdu) pour rester lisible à cette largeur. */
-    .article-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .article-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
     .article-img { height: 92px; font-size: 28px; }
     .article-body { padding: 9px; }
     .article-ref { font-size: 11.5px; }
