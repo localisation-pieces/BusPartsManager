@@ -1584,6 +1584,27 @@
   const AUTH_DOC = doc(fsdb, 'bpm', 'auth');
   const DATA_DOC = doc(fsdb, 'bpm', 'database');
 
+  // Écriture CIBLÉE du panier d'un seul utilisateur (updateDoc avec un champ
+  // en notation pointée "carts.<uid>"), plutôt que de passer par l'envoi de
+  // toute la base (save() -> fbSaveData). Indispensable pour le panier
+  // précisément : contrairement aux autres données, il change très souvent
+  // et depuis plusieurs appareils du même utilisateur en peu de temps — avec
+  // un envoi "tout ou rien", un appareil en retard sur la synchronisation
+  // pouvait faire réapparaître un panier qu'on venait de vider ailleurs.
+  // Cette écriture ciblée ne touche jamais aux autres champs (articles,
+  // commandes, panier des AUTRES utilisateurs...), donc aucun risque de
+  // conflit ni d'écrasement, quel que soit le décalage entre appareils.
+  window.fbSaveCartForUser = async function(uid, cartItems) {
+    try {
+      await updateDoc(DATA_DOC, { [`carts.${uid}`]: cartItems });
+    } catch(e) {
+      // Si le document ou le champ n'existe pas encore (tout premier panier
+      // jamais sauvegardé sur ce projet), updateDoc peut échouer : on retente
+      // avec une fusion classique, qui crée le champ manquant si besoin.
+      try { await setDoc(DATA_DOC, { carts: { [uid]: cartItems } }, { merge: true }); } catch(e2) {}
+    }
+  };
+
   let dataUnsub = null;
   let bootTimedOut = false;
   // CRITIQUE : passe à true seulement après une confirmation SERVEUR (pas
@@ -2201,13 +2222,14 @@ function saveCart() {
   try { localStorage.setItem('bpm_cart_' + currentUser.id, JSON.stringify(cart)); } catch(e){}
   // Synchronisation multi-appareils : le panier de CHAQUE utilisateur est
   // rangé séparément dans DB.carts (une clé par matricule/uid), donc aucun
-  // risque de mélanger les paniers de deux personnes différentes. Cette
-  // partie de DB.carts est envoyée avec le reste des données de l'appli
-  // (voir save()), jamais avec les comptes utilisateurs (bpm/auth) — donc
-  // aucun risque de retoucher au système qu'on vient de sécuriser.
+  // risque de mélanger les paniers de deux personnes différentes. Écriture
+  // CIBLÉE (fbSaveCartForUser, uniquement ce champ précis) plutôt que
+  // save() (qui renvoie toute la base) — indispensable pour éviter qu'un
+  // appareil en retard sur la synchronisation ne fasse réapparaître un
+  // panier qu'on vient de vider ailleurs. Voir fbSaveCartForUser pour le détail.
   if(!DB.carts) DB.carts = {};
   DB.carts[currentUser.id] = cart;
-  save();
+  if(window.fbSaveCartForUser) window.fbSaveCartForUser(currentUser.id, cart);
 }
 
 function loadCart() {
