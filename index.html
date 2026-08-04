@@ -1216,6 +1216,7 @@
     <div class="divider"></div>
     <div class="section-title">🔧 Pièces composant le kit <span style="font-size:12px;font-weight:400;color:var(--text3)">(toutes les pièces d'entretien à inclure)</span></div>
     <div id="kit-articles-list" style="margin-bottom:12px;max-height:280px;overflow-y:auto"></div>
+    <input type="text" id="kit-article-search" placeholder="🔍 Rechercher par description, SAP ou référence fournisseur..." oninput="filterKitArticleOptions()" style="width:100%;padding:9px 13px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;outline:none;background:var(--surface);margin-bottom:8px;box-sizing:border-box">
     <div style="display:flex;gap:10px;align-items:center;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);border:1.5px solid var(--border)">
       <span style="font-size:18px">➕</span>
       <select id="kit-article-add-sel" style="flex:1;padding:9px 13px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;outline:none;background:var(--surface)">
@@ -5514,11 +5515,33 @@ function openKitModal(id) {
   setChk('kit-chk-articule', k ? k.busArticule : true);
   kitArticlesData = k ? (k.articles||[]).map(a=>({...a})) : [];
   // Populate article selector
-  const sel = document.getElementById('kit-article-add-sel');
-  sel.innerHTML = '<option value="">— Sélectionner un article à ajouter —</option>' +
-    DB.articles.map(a=>`<option value="${a.id}">${escapeHtml(a.desc)} (SAP: ${escapeHtml(a.sap)})</option>`).join('');
+  document.getElementById('kit-article-search').value = '';
+  renderKitArticleAddOptions(DB.articles);
   renderKitArticlesList();
   openModal('modal-kit');
+}
+
+// Liste des pièces proposées dans le sélecteur "Ajouter au kit", déjà
+// filtrée par la recherche le cas échéant (voir filterKitArticleOptions).
+function renderKitArticleAddOptions(liste) {
+  const sel = document.getElementById('kit-article-add-sel');
+  sel.innerHTML = '<option value="">— Sélectionner une pièce à ajouter au kit —</option>' +
+    liste.map(a=>`<option value="${a.id}">${escapeHtml(a.desc)} (SAP: ${escapeHtml(a.sap)})</option>`).join('');
+}
+
+// Recherche par description, SAP ou référence fournisseur — indispensable
+// avec plusieurs milliers de pièces au catalogue, une simple liste déroulante
+// sans recherche serait injouable à parcourir.
+function filterKitArticleOptions() {
+  const search = (document.getElementById('kit-article-search').value || '').toLowerCase().trim();
+  if(!search) { renderKitArticleAddOptions(DB.articles); return; }
+  const filtered = DB.articles.filter(a =>
+    (a.desc || '').toLowerCase().includes(search)
+    || (a.sap || '').toLowerCase().includes(search)
+    || (a.fournisseurRef || '').toLowerCase().includes(search)
+    || (a.keywords || '').toLowerCase().includes(search)
+  );
+  renderKitArticleAddOptions(filtered);
 }
 
 function renderKitArticlesList() {
