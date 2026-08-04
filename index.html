@@ -3568,10 +3568,16 @@ async function uploadPhotoToCloudinary(articleId, blob) {
   const formData = new FormData();
   formData.append('file', blob);
   formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-  // Chemin déterministe : si le preset autorise l'écrasement (option
-  // "Overwrite" activée còté preset), remplacer une photo écrase l'ancienne
-  // au lieu d'en laisser une orpheline dans la médiathèque Cloudinary.
-  formData.append('public_id', `articles/${articleId}`);
+  // Chaque nouvelle photo obtient une adresse UNIQUE générée par Cloudinary
+  // (rangée dans le dossier "articles"), plutôt qu'une adresse fixe basée sur
+  // l'identifiant de la pièce. Nécessaire car les envois "non signés" (le
+  // seul mode compatible avec une appli 100% côté navigateur, sans clé
+  // secrète exposée) interdisent l'écrasement pour des raisons de sécurité —
+  // avec une adresse fixe, remplacer une photo ne faisait donc jamais rien
+  // de visible : Cloudinary renvoyait simplement l'ancienne image existante.
+  // L'ancienne photo reste inutilisée dans la médiathèque (sans gêner ni
+  // coûter cher vu l'espace disponible), mais la nouvelle s'affiche bien.
+  formData.append('folder', 'articles');
 
   const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
     method: 'POST',
