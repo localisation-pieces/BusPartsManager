@@ -1216,13 +1216,9 @@
     <div class="divider"></div>
     <div class="section-title">🔧 Pièces composant le kit <span style="font-size:12px;font-weight:400;color:var(--text3)">(toutes les pièces d'entretien à inclure)</span></div>
     <div id="kit-articles-list" style="margin-bottom:12px;max-height:280px;overflow-y:auto"></div>
-    <input type="text" id="kit-article-search" placeholder="🔍 Rechercher par description, SAP ou référence fournisseur..." oninput="filterKitArticleOptions()" style="width:100%;padding:9px 13px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;outline:none;background:var(--surface);margin-bottom:8px;box-sizing:border-box">
-    <div style="display:flex;gap:10px;align-items:center;padding:10px 12px;background:var(--surface2);border-radius:var(--radius);border:1.5px solid var(--border)">
-      <span style="font-size:18px">➕</span>
-      <select id="kit-article-add-sel" style="flex:1;padding:9px 13px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;outline:none;background:var(--surface)">
-        <option value="">— Sélectionner une pièce à ajouter au kit —</option>
-      </select>
-      <button class="btn btn-primary btn-sm" onclick="addKitArticle()">Ajouter</button>
+    <div style="position:relative">
+      <input type="text" id="kit-article-search" placeholder="🔍 Rechercher une pièce par description, SAP ou référence fournisseur..." oninput="filterKitArticleOptions()" style="width:100%;padding:9px 13px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;outline:none;background:var(--surface);margin-bottom:8px;box-sizing:border-box">
+      <div id="kit-article-search-results" style="display:none;position:absolute;top:calc(100% - 4px);left:0;right:0;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:60;max-height:260px;overflow-y:auto"></div>
     </div>
     <div style="margin-top:10px;font-size:12px;color:var(--text3)">💡 Un kit doit contenir au minimum 2 pièces. Vous pouvez ajuster les quantités individuellement.</div>
     <div class="modal-footer">
@@ -5514,34 +5510,59 @@ function openKitModal(id) {
   setChk('kit-chk-standard', k ? k.busStandard : true);
   setChk('kit-chk-articule', k ? k.busArticule : true);
   kitArticlesData = k ? (k.articles||[]).map(a=>({...a})) : [];
-  // Populate article selector
   document.getElementById('kit-article-search').value = '';
-  renderKitArticleAddOptions(DB.articles);
+  document.getElementById('kit-article-search-results').style.display = 'none';
+  document.getElementById('kit-article-search-results').innerHTML = '';
   renderKitArticlesList();
   openModal('modal-kit');
 }
 
-// Liste des pièces proposées dans le sélecteur "Ajouter au kit", déjà
-// filtrée par la recherche le cas échéant (voir filterKitArticleOptions).
-function renderKitArticleAddOptions(liste) {
-  const sel = document.getElementById('kit-article-add-sel');
-  sel.innerHTML = '<option value="">— Sélectionner une pièce à ajouter au kit —</option>' +
-    liste.map(a=>`<option value="${a.id}">${escapeHtml(a.desc)} (SAP: ${escapeHtml(a.sap)})</option>`).join('');
-}
-
 // Recherche par description, SAP ou référence fournisseur — indispensable
-// avec plusieurs milliers de pièces au catalogue, une simple liste déroulante
-// sans recherche serait injouable à parcourir.
+// avec plusieurs milliers de pièces au catalogue. Sur le même principe que
+// la recherche globale de l'appli : les résultats apparaissent directement
+// sous le champ, et un simple clic sur une pièce l'ajoute au kit (pas besoin
+// d'ouvrir une liste déroulante séparée ni de bouton "Ajouter").
 function filterKitArticleOptions() {
+  const box = document.getElementById('kit-article-search-results');
   const search = (document.getElementById('kit-article-search').value || '').toLowerCase().trim();
-  if(!search) { renderKitArticleAddOptions(DB.articles); return; }
+  if(!search || search.length < 2) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  const dejaDansLeKit = new Set(kitArticlesData.map(ka => ka.articleId));
   const filtered = DB.articles.filter(a =>
     (a.desc || '').toLowerCase().includes(search)
     || (a.sap || '').toLowerCase().includes(search)
     || (a.fournisseurRef || '').toLowerCase().includes(search)
     || (a.keywords || '').toLowerCase().includes(search)
-  );
-  renderKitArticleAddOptions(filtered);
+  ).slice(0, 20);
+
+  box.style.display = '';
+  if(!filtered.length) {
+    box.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucune pièce trouvée pour "${escapeHtml(search)}"</div>`;
+    return;
+  }
+  box.innerHTML = filtered.map(a => `
+    <div onclick="kitArticleQuickAdd('${a.id}')" style="display:flex;align-items:center;gap:10px;padding:9px 13px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <span style="font-size:16px;flex-shrink:0">${dejaDansLeKit.has(a.id) ? '✅' : '⚙️'}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}</div>
+        <div style="font-size:11px;color:var(--text3)">SAP ${escapeHtml(a.sap)}${a.fournisseurRef ? ' · Réf. ' + escapeHtml(a.fournisseurRef) : ''}</div>
+      </div>
+      ${dejaDansLeKit.has(a.id) ? '<span style="font-size:11px;color:var(--text3);flex-shrink:0">déjà ajoutée</span>' : ''}
+    </div>`).join('');
+}
+
+// Ajoute directement la pièce cliquée au kit (ou incrémente sa quantité si
+// elle y est déjà), sans étape intermédiaire — puis réinitialise la
+// recherche pour en ajouter une autre facilement à la suite.
+function kitArticleQuickAdd(articleId) {
+  const existing = kitArticlesData.find(ka => ka.articleId === articleId);
+  if(existing) { existing.qty++; }
+  else { kitArticlesData.push({ articleId, qty: 1 }); }
+  renderKitArticlesList();
+  const searchInput = document.getElementById('kit-article-search');
+  searchInput.value = '';
+  searchInput.focus();
+  document.getElementById('kit-article-search-results').style.display = 'none';
 }
 
 function renderKitArticlesList() {
@@ -5576,17 +5597,6 @@ function kitRemoveArticle(idx) {
   kitArticlesData.splice(idx, 1);
   renderKitArticlesList();
 }
-function addKitArticle() {
-  const sel = document.getElementById('kit-article-add-sel');
-  const artId = sel.value;
-  if(!artId) return;
-  const existing = kitArticlesData.find(ka=>ka.articleId===artId);
-  if(existing) { existing.qty++; }
-  else { kitArticlesData.push({articleId:artId, qty:1}); }
-  sel.value = '';
-  renderKitArticlesList();
-}
-
 function saveKit() {
   const nom = document.getElementById('kit-nom').value.trim();
   if(!nom) { showNotif('⚠️','Champ manquant','Le nom du kit est obligatoire'); return; }
@@ -6608,6 +6618,10 @@ document.addEventListener('click', e => {
   const box = document.getElementById('global-search-results');
   const input = document.getElementById('global-search-input');
   if(box && !box.contains(e.target) && e.target !== input) box.style.display = 'none';
+
+  const kitBox = document.getElementById('kit-article-search-results');
+  const kitInput = document.getElementById('kit-article-search');
+  if(kitBox && !kitBox.contains(e.target) && e.target !== kitInput) kitBox.style.display = 'none';
 });
 
 function showGlobalResults() {
