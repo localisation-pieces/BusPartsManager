@@ -1136,7 +1136,7 @@
           </div>
         </div>
         <div class="form-group">
-          <label>⚠️ Alerte spéciale (optionnel) <span style="font-size:11px;color:var(--text3);font-weight:400">— affichée en badge sur la pièce, et en confirmation au moment de l'ajouter au panier</span></label>
+          <label>🔄 Rappel de retour (optionnel) <span style="font-size:11px;color:var(--text3);font-weight:400">— pour prévenir le mécanicien qu'il doit rapporter l'ANCIENNE pièce remplacée (échange standard, reconditionnement...). Affiché en badge sur la pièce, et rappelé au moment de l'ajouter au panier</span></label>
           <input type="text" id="art-alerte" placeholder="ex: Ancienne pièce à retourner à Sanders pour reconditionnement" oninput="uppercaseInput(this)">
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
@@ -3261,7 +3261,7 @@ function filterArticles() {
         <div class="article-ref">${escapeHtml(a.sap)}</div>
         <div class="article-name">${highlight(a.desc, q)}</div>
         ${a.categorie ? `<div style="margin-bottom:6px"><span class="badge" style="background:var(--navy);color:white">${escapeHtml(a.categorie)}</span></div>` : ''}
-        ${a.alerte ? `<div style="margin-bottom:7px"><span class="badge" style="background:var(--danger-light);color:var(--danger);border:1px solid var(--danger);font-weight:700">⚠️ ${escapeHtml(a.alerte)}</span></div>` : ''}
+        ${a.alerte ? `<div style="margin-bottom:7px"><span class="badge" style="background:var(--amber-light);color:var(--amber-dark);border:1px solid var(--amber);font-weight:700">🔄 ${escapeHtml(a.alerte)}</span></div>` : ''}
         ${a.marquesBus && a.marquesBus.length ? `
         <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:7px">
           ${a.marquesBus.map(m=>`<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;background:var(--amber-light);color:var(--amber-dark);border:1px solid var(--amber);border-radius:20px;font-size:11px;font-weight:600">🚌 ${escapeHtml(m)}</span>`).join('')}
@@ -3330,7 +3330,7 @@ function openArticleDetail(id) {
   document.getElementById('detail-sap-badge').textContent = '🔧 SAP ' + a.sap;
   const canEdit = currentUser.role === 'admin' || currentUser.role === 'magasinier';
   document.getElementById('detail-body').innerHTML = `
-    ${a.alerte ? `<div style="margin-bottom:14px;padding:10px 14px;background:var(--danger-light);border:1.5px solid var(--danger);border-radius:var(--radius);color:var(--danger);font-weight:700;font-size:13px">⚠️ ${escapeHtml(a.alerte)}</div>` : ''}
+    ${a.alerte ? `<div style="margin-bottom:14px;padding:10px 14px;background:var(--amber-light);border:1.5px solid var(--amber);border-radius:var(--radius);color:var(--amber-dark);font-weight:700;font-size:13px">🔄 ${escapeHtml(a.alerte)}</div>` : ''}
     <div class="article-detail">
       <div class="article-detail-img">
         ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
@@ -3409,7 +3409,7 @@ function cardQtyChange(id, d) {
 function addToCartFromCard(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
-  if(a.alerte && !confirm(`⚠️ ${a.alerte}\n\nAjouter quand même "${a.desc}" au panier ?`)) return;
+  if(a.alerte && !confirm(`🔄 Rappel de retour\n\n${a.alerte}\n\nOK pour continuer l'ajout de "${a.desc}" au panier.`)) return;
   const qty = cardQtys[id] || 1;
   const existing = cart.find(c => c.id === id);
   if(existing) existing.qty += qty;
@@ -3427,7 +3427,7 @@ function addToCartFromCard(id) {
 function addToCart(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
-  if(a.alerte && !confirm(`⚠️ ${a.alerte}\n\nAjouter quand même "${a.desc}" au panier ?`)) return;
+  if(a.alerte && !confirm(`🔄 Rappel de retour\n\n${a.alerte}\n\nOK pour continuer l'ajout de "${a.desc}" au panier.`)) return;
   const qtyToAdd = detailQty;
   const existing = cart.find(c => c.id === id);
   if(existing) existing.qty += qtyToAdd;
