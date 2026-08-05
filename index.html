@@ -1193,6 +1193,15 @@
 </div>
 
 <!-- KIT MODAL (création/édition — admin) -->
+<div class="modal-overlay" id="modal-return-reminder">
+  <div class="modal" style="max-width:420px;text-align:center;padding:32px 28px">
+    <div style="font-size:48px;margin-bottom:14px">🔄</div>
+    <h3 style="margin-bottom:10px">Pense à rapporter l'ancienne pièce</h3>
+    <p id="return-reminder-msg" style="color:var(--text2);font-size:14px;line-height:1.5;margin-bottom:24px"></p>
+    <button class="btn btn-primary" style="width:100%" onclick="closeModal('modal-return-reminder')">✅ Compris</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-kit">
   <div class="modal" style="width:720px">
     <div class="modal-header">
@@ -3409,7 +3418,6 @@ function cardQtyChange(id, d) {
 function addToCartFromCard(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
-  if(a.alerte && !confirm(`🔄 Rappel de retour\n\n${a.alerte}\n\nOK pour continuer l'ajout de "${a.desc}" au panier.`)) return;
   const qty = cardQtys[id] || 1;
   const existing = cart.find(c => c.id === id);
   if(existing) existing.qty += qty;
@@ -3422,12 +3430,12 @@ function addToCartFromCard(id) {
   updateCartBadge();
   saveCart();
   showNotif('🛒', 'Ajouté au panier', a.desc + ' × ' + qty + (existing ? ' (total: '+totalQty+')' : ''));
+  if(a.alerte) showReturnReminder(a.alerte);
 }
 
 function addToCart(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
-  if(a.alerte && !confirm(`🔄 Rappel de retour\n\n${a.alerte}\n\nOK pour continuer l'ajout de "${a.desc}" au panier.`)) return;
   const qtyToAdd = detailQty;
   const existing = cart.find(c => c.id === id);
   if(existing) existing.qty += qtyToAdd;
@@ -3438,6 +3446,14 @@ function addToCart(id) {
   saveCart();
   closeModal('modal-article-detail');
   showNotif('🛒', 'Ajouté au panier', a.desc + ' × ' + qtyToAdd + (existing ? ' (total: '+totalQty+')' : ''));
+  if(a.alerte) showReturnReminder(a.alerte);
+}
+
+// Affiche le popup de rappel (style de l'appli, purement informatif — pas
+// de question "voulez-vous continuer", la pièce est déjà ajoutée au panier).
+function showReturnReminder(message) {
+  document.getElementById('return-reminder-msg').textContent = message;
+  openModal('modal-return-reminder');
 }
 
 function updateCartBadge() {
