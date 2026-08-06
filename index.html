@@ -740,6 +740,8 @@
               <option value="serialise">Sérialisé</option>
               <option value="reparable">Réparable</option>
               <option value="chimique">Chimique</option>
+              <option value="avecphoto">📷 Avec photo</option>
+              <option value="sansphoto">🚫 Sans photo</option>
             </select>
           </div>
           <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
@@ -3225,8 +3227,6 @@ function debouncedFilterArticles() {
 
 function filterArticles() {
   adjustCatalogToolbarSticky();
-  const badge = document.getElementById('catalog-count-badge');
-  if(badge) { badge.textContent = DB.articles.length; badge.style.display = DB.articles.length ? '' : 'none'; }
 
   const q = document.getElementById('search-input').value.toLowerCase();
   const mag = document.getElementById('filter-magasin').value;
@@ -3246,12 +3246,20 @@ function filterArticles() {
     if(type === 'serialise' && !a.serialise) return false;
     if(type === 'reparable' && !a.reparable) return false;
     if(type === 'chimique' && !a.chimique) return false;
+    if(type === 'avecphoto' && !a.photo) return false;
+    if(type === 'sansphoto' && a.photo) return false;
     if(marque && !(a.marquesBus && a.marquesBus.includes(marque))) return false;
     if(categorie && a.categorie !== categorie) return false;
     if(fournisseur && a.fournisseur !== fournisseur) return false;
     if(fournisseurRefQuery && !(a.fournisseurRef||'').toLowerCase().includes(fournisseurRefQuery)) return false;
     return true;
   });
+
+  // Le badge affiche le nombre de résultats correspondant au(x) filtre(s)
+  // actif(s) — utile par exemple pour savoir combien de pièces ont déjà une
+  // photo, en filtrant sur "📷 Avec photo" — pas juste le total du catalogue.
+  const badge = document.getElementById('catalog-count-badge');
+  if(badge) { badge.textContent = arts.length; badge.style.display = arts.length ? '' : 'none'; }
 
   const grid = document.getElementById('article-grid');
   if(!arts.length) {
