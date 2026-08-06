@@ -6630,6 +6630,11 @@ function showNotif(icon, title, msg) {
 document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => {
     if(e.target !== el) return;
+    // Si une sélection de texte est en cours (ex: copier une référence
+    // fournisseur), le relâchement de la souris peut atterrir sur le fond
+    // de la fenêtre une fois le dernier caractère dépassé — ce qui comptait
+    // à tort comme un clic "fermer la fenêtre". On l'ignore dans ce cas.
+    if(window.getSelection && window.getSelection().toString().length > 0) return;
     if(el.id === 'modal-scan') { closeScanModal(); return; }
     el.classList.remove('open');
   });
