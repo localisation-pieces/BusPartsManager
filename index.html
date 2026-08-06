@@ -964,6 +964,18 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">📸 Import de photos en masse</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Sélectionne d'un coup toutes tes photos (nommées avec le numéro SAP de la pièce, ex: <code>66000337.jpg</code>) —
+              chacune sera automatiquement associée à la bonne fiche et envoyée, sans avoir besoin de les ajouter une par une.
+            </p>
+            <input type="file" id="bulk-photo-input" accept="image/*" multiple style="display:none" onchange="startBulkPhotoImport(this.files)">
+            <button class="btn btn-outline" onclick="document.getElementById('bulk-photo-input').click()">📸 Sélectionner les photos à importer</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">🛠️ Outils de maintenance du catalogue</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Corrige en une fois le magasin des pièces qui n'ont pas encore "2K – Pike" comme magasin (ex : pièces importées sans magasin renseigné).</p>
@@ -1195,6 +1207,20 @@
 </div>
 
 <!-- KIT MODAL (création/édition — admin) -->
+<div class="modal-overlay" id="modal-bulk-photo">
+  <div class="modal" style="max-width:560px">
+    <h3 style="margin-bottom:14px">📸 Import de photos en masse</h3>
+    <div id="bulk-photo-progress-bar-wrap" style="background:var(--surface2);border-radius:99px;height:10px;overflow:hidden;margin-bottom:10px">
+      <div id="bulk-photo-progress-bar" style="background:var(--primary);height:100%;width:0%;transition:width .2s"></div>
+    </div>
+    <p id="bulk-photo-progress-text" style="font-size:13px;color:var(--text2);margin-bottom:14px">Préparation...</p>
+    <div id="bulk-photo-log" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12.5px;font-family:var(--font-mono)"></div>
+    <div style="margin-top:18px;text-align:right">
+      <button class="btn btn-outline" id="bulk-photo-close-btn" onclick="closeModal('modal-bulk-photo')" disabled>Fermer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-return-reminder">
   <div class="modal" style="max-width:420px;text-align:center;padding:32px 28px">
     <div style="font-size:48px;margin-bottom:14px">🔄</div>
@@ -3647,6 +3673,101 @@ function compressImageToBlob(file, maxDim, quality) {
     reader.onerror = () => reject(new Error('Lecture du fichier échouée'));
     reader.readAsDataURL(file);
   });
+}
+
+// =============================
+// IMPORT DE PHOTOS EN MASSE — associe chaque fichier à sa pièce via le
+// numéro SAP présent dans le nom du fichier (ex: "66000337.jpg" → SAP
+// 66000337). Traite les fichiers un par un (pas en parallèle) pour rester
+// raisonnable vis-à-vis de Cloudinary et laisser un vrai suivi visuel.
+// =============================
+function extractSapFromFilename(filename) {
+  // On prend la première suite de chiffres présente dans le nom du fichier,
+  // sans l'extension — couvre "66000337.jpg", "SAP_66000337.png",
+  // "66000337 (1).jpg", etc.
+  const nameWithoutExt = filename.replace(/\.[^.]+$/, '');
+  const match = nameWithoutExt.match(/\d+/);
+  return match ? match[0] : null;
+}
+
+async function startBulkPhotoImport(fileList) {
+  const files = Array.from(fileList || []);
+  if(!files.length) return;
+
+  // Un seul choix pour tout le lot (pas une question par doublon, ce qui
+  // serait ingérable avec plusieurs centaines de photos) : soit on remplace
+  // systématiquement une photo déjà présente, soit on ignore ces pièces-là.
+  const remplacerExistantes = confirm(
+    `${files.length} photo(s) sélectionnée(s).\n\n` +
+    `Certaines pièces ont peut-être déjà une photo.\n\n` +
+    `OK = remplacer les photos déjà présentes\n` +
+    `Annuler = ignorer les pièces qui ont déjà une photo (ne garder que les nouvelles)`
+  );
+
+  const bar = document.getElementById('bulk-photo-progress-bar');
+  const text = document.getElementById('bulk-photo-progress-text');
+  const log = document.getElementById('bulk-photo-log');
+  const closeBtn = document.getElementById('bulk-photo-close-btn');
+  log.innerHTML = '';
+  bar.style.width = '0%';
+  closeBtn.disabled = true;
+  openModal('modal-bulk-photo');
+
+  function addLog(line, color) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(color) div.style.color = color;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  let ok = 0, introuvable = 0, erreur = 0, ignore = 0;
+
+  for(let i = 0; i < files.length; i++) {
+    const file = files[i];
+    text.textContent = `${i + 1} / ${files.length} — ${file.name}`;
+    bar.style.width = Math.round(((i) / files.length) * 100) + '%';
+
+    const sap = extractSapFromFilename(file.name);
+    if(!sap) {
+      addLog(`❌ ${file.name} — aucun numéro trouvé dans le nom du fichier`, 'var(--danger)');
+      erreur++;
+      continue;
+    }
+    const article = DB.articles.find(a => a.sap === sap);
+    if(!article) {
+      addLog(`⚠️ ${file.name} — aucune pièce avec le SAP ${sap}`, 'var(--amber-dark)');
+      introuvable++;
+      continue;
+    }
+    if(article.photo && !remplacerExistantes) {
+      addLog(`⏭️ ${file.name} — ${article.desc} a déjà une photo, ignorée`, 'var(--text3)');
+      ignore++;
+      continue;
+    }
+    try {
+      const blob = await compressImageToBlob(file, 900, 0.75);
+      const url = await uploadPhotoToCloudinary(article.id, blob);
+      article.photo = url;
+      addLog(`✅ ${file.name} → ${article.desc} (SAP ${sap})`, 'var(--primary)');
+      ok++;
+    } catch(e) {
+      addLog(`❌ ${file.name} — échec de l'envoi : ${e.message}`, 'var(--danger)');
+      erreur++;
+    }
+  }
+
+  bar.style.width = '100%';
+  text.textContent = `Terminé : ${ok} photo(s) ajoutée(s), ${ignore} ignorée(s) (déjà une photo), ${introuvable} sans pièce correspondante, ${erreur} erreur(s).`;
+  addLog('—————————————————', 'var(--text3)');
+  addLog(`Résumé : ${ok} OK · ${ignore} ignorée(s) · ${introuvable} SAP introuvable · ${erreur} erreur(s)`, 'var(--text)');
+
+  if(ok > 0) {
+    save();
+    filterArticles();
+  }
+  closeBtn.disabled = false;
+  document.getElementById('bulk-photo-input').value = '';
 }
 
 async function previewImage(input) {
