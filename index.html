@@ -2075,10 +2075,10 @@ async function migratePasswordsIfNeeded() {
 // =============================
 const DB = {
   users: [
-    { id:'u1', login:'00001', pass:'admin123', name:'Admin Système', matricule:'00001', tel:'+32 2 515 20 00', email:'admin@stib.be', role:'admin', magasin:'', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile','admin','settings'] },
-    { id:'u2', login:'10001', pass:'mag123', name:'Jean DUPONT', matricule:'10001', tel:'+32 470 11 22 33', email:'j.dupont@stib.be', role:'magasinier', magasin:'2K', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
-    { id:'u3', login:'20001', pass:'agent123', name:'Mohamed BENSALEM', matricule:'20001', tel:'+32 470 44 55 66', email:'m.bensalem@stib.be', role:'agent', magasin:'2K', active:true, statut:'actif', perms:['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile'] },
-    { id:'u4', login:'10002', pass:'mag123', name:'Sophie MARTIN', matricule:'10002', tel:'+32 470 77 88 99', email:'s.martin@stib.be', role:'magasinier', magasin:'2C', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
+    { id:'u1', login:'00001', name:'Admin Système', matricule:'00001', tel:'+32 2 515 20 00', email:'admin@stib.be', role:'admin', magasin:'', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile','admin','settings'] },
+    { id:'u2', login:'10001', name:'Jean DUPONT', matricule:'10001', tel:'+32 470 11 22 33', email:'j.dupont@stib.be', role:'magasinier', magasin:'2K', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
+    { id:'u3', login:'20001', name:'Mohamed BENSALEM', matricule:'20001', tel:'+32 470 44 55 66', email:'m.bensalem@stib.be', role:'agent', magasin:'2K', active:true, statut:'actif', perms:['catalog','kits','tools','myloans','cart','myorders','notifications','messages','profile'] },
+    { id:'u4', login:'10002', name:'Sophie MARTIN', matricule:'10002', tel:'+32 470 77 88 99', email:'s.martin@stib.be', role:'magasinier', magasin:'2C', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
   ],
   articles: [
     { id:'a1', sap:'10001234', desc:'Filtre à huile moteur', fournisseur:'MANN-FILTER', fournisseurRef:'W940/25', magasin:'2K', emplacement:'A1-E2-C3', keywords:'filtre huile moteur lubrification', busStandard:true, busArticule:true, serialise:false, reparable:false, chimique:false, stock:12, photo:'' },
@@ -7012,7 +7012,7 @@ function globalSearch() {
   const typeColors = { article:'var(--info)', commande:'var(--amber-dark)', outil:'var(--success)', utilisateur:'var(--navy)' };
 
   if(!results.length) {
-    box.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">Aucun résultat pour "${q}"</div>`;
+    box.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">Aucun résultat pour "${escapeHtml(q)}"</div>`;
     return;
   }
 
