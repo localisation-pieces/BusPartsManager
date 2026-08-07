@@ -1543,7 +1543,7 @@
 
 <!-- PHOTO ZOOM MODAL — simple viewer, devient un mini-carrousel (flèches + points)
      dès qu'une pièce a plus d'une image (photo + éventuelle image d'emplacement) -->
-<div class="modal-overlay" id="modal-photo-zoom" onclick="closeModal('modal-photo-zoom')" style="background:rgba(0,0,0,0.85)">
+<div class="modal-overlay" id="modal-photo-zoom" style="background:rgba(0,0,0,0.85)">
   <img id="photo-zoom-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.5)" onclick="event.stopPropagation()">
   <button id="zoom-prev-btn" onclick="event.stopPropagation();zoomPhotoNav(-1)" style="display:none;position:absolute;left:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">‹</button>
   <button id="zoom-next-btn" onclick="event.stopPropagation();zoomPhotoNav(1)" style="display:none;position:absolute;right:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">›</button>
@@ -6906,26 +6906,46 @@ function showNotif(icon, title, msg) {
   setTimeout(() => banner.classList.remove('show'), 4000);
 }
 
-// Close modal on overlay click
+// Close modal on overlay click.
+// On ne ferme que si le clic a COMMENCÉ et FINI sur le fond (l'overlay
+// lui-même), pas seulement où il se termine. C'est plus fiable que de
+// détecter une sélection de texte (window.getSelection ne voit pas les
+// sélections à l'intérieur d'un champ <input>/<textarea> — donc en mode
+// modification, sélectionner du texte dans un champ puis relâcher la souris
+// hors du champ fermait la fenêtre à tort malgré l'ancienne protection).
+// Avec ce système, un clic-glissé qui démarre dans le formulaire (champ,
+// bouton, texte...) ne peut plus jamais être interprété comme "fermer".
 document.querySelectorAll('.modal-overlay').forEach(el => {
+  let mousedownOnOverlay = false;
+  el.addEventListener('mousedown', e => { mousedownOnOverlay = (e.target === el); });
   el.addEventListener('click', e => {
-    if(e.target !== el) return;
-    // Si une sélection de texte est en cours (ex: copier une référence
-    // fournisseur), le relâchement de la souris peut atterrir sur le fond
-    // de la fenêtre une fois le dernier caractère dépassé — ce qui comptait
-    // à tort comme un clic "fermer la fenêtre". On l'ignore dans ce cas.
-    if(window.getSelection && window.getSelection().toString().length > 0) return;
+    const wasValidClose = mousedownOnOverlay && e.target === el;
+    mousedownOnOverlay = false;
+    if(!wasValidClose) return;
     if(el.id === 'modal-scan') { closeScanModal(); return; }
     el.classList.remove('open');
   });
 });
 
+// Petite fonction utilitaire réutilisable ailleurs si besoin : y a-t-il une
+// sélection de texte active, que ce soit dans la page ou dans un champ de
+// formulaire actuellement focus (input/textarea) ?
+function hasActiveTextSelection() {
+  if(window.getSelection && window.getSelection().toString().length > 0) return true;
+  const el = document.activeElement;
+  if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+    try { if(typeof el.selectionStart === 'number' && el.selectionStart !== el.selectionEnd) return true; } catch(e) {}
+  }
+  return false;
+}
+
 // Fermer les résultats de recherche globale au clic extérieur
 document.addEventListener('click', e => {
   // Si l'utilisateur est en train de sélectionner du texte (ex: pour copier
-  // une référence SAP), on ne ferme pas le panneau — sinon la sélection est
-  // perdue dès qu'on dépasse le dernier caractère avec la souris.
-  if(window.getSelection && window.getSelection().toString().length > 0) return;
+  // une référence SAP, y compris à l'intérieur d'un champ de saisie), on ne
+  // ferme pas le panneau — sinon la sélection est perdue dès qu'on dépasse
+  // le dernier caractère avec la souris.
+  if(hasActiveTextSelection()) return;
   const box = document.getElementById('global-search-results');
   const input = document.getElementById('global-search-input');
   if(box && !box.contains(e.target) && e.target !== input) box.style.display = 'none';
