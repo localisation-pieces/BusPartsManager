@@ -1878,6 +1878,10 @@
       // écritures directes soient affectées). Si le serveur connaît des
       // comptes absents du tableau qu'on s'apprête à écrire, on annule pour
       // ne jamais en perdre un silencieusement.
+      // NB : ne pas utiliser cette fonction pour une SUPPRESSION volontaire de
+      // compte — le compte visé sera toujours "absent" du tableau local dans
+      // ce cas précis, ce qui bloquerait systématiquement l'opération à tort.
+      // Utiliser fbDeleteUserById pour ça.
       const freshSnap = await getDocFromServer(AUTH_DOC);
       const freshUsers = freshSnap.exists() ? (freshSnap.data().users || []) : [];
       const localIds = new Set(users.map(u => u.id));
@@ -1890,6 +1894,29 @@
       return true;
     } catch (e) {
       console.warn('Sauvegarde des utilisateurs (partielle) échouée :', e);
+      return false;
+    }
+  };
+
+  // Suppression ATOMIQUE d'un compte par id : lit l'état réel du serveur dans
+  // une transaction et retire précisément ce compte, sans jamais comparer à
+  // une copie locale potentiellement obsolète — contrairement à
+  // fbSaveUsersOnly, dont la vérification "comptes manquants" bloquerait à
+  // tort toute suppression volontaire (le compte visé manque forcément une
+  // fois retiré). Protège aussi contre une suppression concurrente du même
+  // compte depuis un autre appareil (le filtre ne fait rien si déjà absent).
+  window.fbDeleteUserById = async function(userId) {
+    try {
+      await runTransaction(fsdb, async (tx) => {
+        const snap = await tx.get(AUTH_DOC);
+        if (!snap.exists()) throw new Error('AUTH_DOC_MISSING');
+        const users = snap.data().users || [];
+        const filtered = users.filter(u => u.id !== userId);
+        tx.update(AUTH_DOC, { users: filtered });
+      });
+      return true;
+    } catch (e) {
+      console.warn('Suppression du compte échouée :', e);
       return false;
     }
   };
@@ -5243,8 +5270,8 @@ async function deleteUser(id) {
 
   const previousUsers = DB.users;
   DB.users = DB.users.filter(x => x.id !== id);
-  const ok = window.fbSaveUsersOnly
-    ? await window.fbSaveUsersOnly(DB.users)
+  const ok = window.fbDeleteUserById
+    ? await window.fbDeleteUserById(id)
     : true;
   if(!ok) {
     DB.users = previousUsers; // annule si l'enregistrement a échoué
