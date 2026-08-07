@@ -1958,7 +1958,11 @@
 
   // Réservation ATOMIQUE d'une référence SAP (transaction Firestore) : garantit
   // l'unicité même si deux personnes créent la même pièce au même instant sur
-  // 2 appareils différents. Renvoie true si réservée avec succès, false si déjà prise.
+  // 2 appareils différents. Renvoie {ok:true} si réservée avec succès, ou
+  // {ok:false, reason:'taken'|'error', error} sinon — distinction nécessaire
+  // car une erreur de quota/réseau/permissions ne doit pas être annoncée à
+  // l'utilisateur comme "référence déjà prise" (message trompeur constaté le
+  // 07/08/2026 : le SAP n'existait nulle part, la vraie cause était masquée).
   window.fbReserveSAP = async function(sap) {
     const ref = doc(fsdb, 'sapRefs', sap);
     try {
@@ -1967,9 +1971,11 @@
         if (existing.exists()) throw new Error('SAP_TAKEN');
         tx.set(ref, { reservedAt: serverTimestamp() });
       });
-      return true;
+      return { ok: true };
     } catch (e) {
-      return false;
+      const taken = e && e.message === 'SAP_TAKEN';
+      if (!taken) console.error('fbReserveSAP a échoué pour une raison autre qu\'un doublon :', e);
+      return { ok: false, reason: taken ? 'taken' : 'error', error: e };
     }
   };
 
@@ -3964,10 +3970,14 @@ async function saveArticle() {
   // car chaque appareil ne voit que sa propre copie locale au moment du clic).
   if(sapChanged && window.fbReserveSAP) {
     if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Vérification…'; }
-    const reserved = await window.fbReserveSAP(sap);
-    if(!reserved) {
+    const result = await window.fbReserveSAP(sap);
+    if(!result.ok) {
       if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
-      sapErr.textContent = `🚫 Article ${sap} en double — cette référence vient d'être prise à l'instant sur un autre appareil. Choisissez une autre référence.`;
+      if(result.reason === 'taken') {
+        sapErr.textContent = `🚫 Article ${sap} en double — cette référence vient d'être prise à l'instant sur un autre appareil. Choisissez une autre référence.`;
+      } else {
+        sapErr.textContent = `⚠️ Impossible de vérifier la référence ${sap} pour le moment (problème de connexion ou de quota Firestore). Ce n'est probablement PAS un doublon. Réessayez dans quelques instants, ou contactez l'administrateur si ça persiste.`;
+      }
       sapErr.style.display = 'block';
       document.getElementById('art-sap').focus();
       return;
