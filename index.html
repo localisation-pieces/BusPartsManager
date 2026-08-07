@@ -1541,9 +1541,13 @@
   </div>
 </div>
 
-<!-- PHOTO ZOOM MODAL -->
+<!-- PHOTO ZOOM MODAL — simple viewer, devient un mini-carrousel (flèches + points)
+     dès qu'une pièce a plus d'une image (photo + éventuelle image d'emplacement) -->
 <div class="modal-overlay" id="modal-photo-zoom" onclick="closeModal('modal-photo-zoom')" style="background:rgba(0,0,0,0.85)">
   <img id="photo-zoom-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.5)" onclick="event.stopPropagation()">
+  <button id="zoom-prev-btn" onclick="event.stopPropagation();zoomPhotoNav(-1)" style="display:none;position:absolute;left:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">‹</button>
+  <button id="zoom-next-btn" onclick="event.stopPropagation();zoomPhotoNav(1)" style="display:none;position:absolute;right:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">›</button>
+  <div id="zoom-dots" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);gap:8px"></div>
   <button onclick="closeModal('modal-photo-zoom')" style="position:absolute;top:24px;right:32px;background:rgba(255,255,255,0.15);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer">✕</button>
 </div>
 
@@ -3308,10 +3312,9 @@ function filterArticles() {
 
   grid.innerHTML = arts.map(a => `
     <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
-      <div class="article-img" ${a.photo ? `onclick="openPhotoZoom('${a.photo}', event)" style="cursor:zoom-in"` : ''}>
-        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
+      <div class="article-img" ${(a.photo || a.photoEmplacement) ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
+        ${(a.photo || a.photoEmplacement) ? `<img src="${cloudinaryOptimized(a.photo || a.photoEmplacement,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
         ${a.stock <= 2 ? `<span class="badge badge-red" style="position:absolute;top:8px;right:8px">Stock faible</span>` : ''}
-        ${a.photoEmplacement ? `<span title="Image d'emplacement disponible" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);color:white;font-size:10px;padding:2px 6px;border-radius:4px">📍</span>` : ''}
         ${a.photo ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.5);color:white;font-size:10px;padding:2px 6px;border-radius:4px">🔍 Agrandir</span>` : ''}
       </div>
       <div class="article-body">
@@ -3389,8 +3392,8 @@ function openArticleDetail(id) {
   document.getElementById('detail-body').innerHTML = `
     ${a.alerte ? `<div style="margin-bottom:14px;padding:10px 14px;background:var(--amber-light);border:1.5px solid var(--amber);border-radius:var(--radius);color:var(--amber-dark);font-weight:700;font-size:13px">🔄 ${escapeHtml(a.alerte)}</div>` : ''}
     <div class="article-detail">
-      <div class="article-detail-img">
-        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
+      <div class="article-detail-img" ${(a.photo || a.photoEmplacement) ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
+        ${(a.photo || a.photoEmplacement) ? `<img src="${cloudinaryOptimized(a.photo || a.photoEmplacement,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
       </div>
       <div>
         <div class="detail-row"><span class="label">Référence SAP</span><span style="font-family:var(--font-mono);font-weight:800;font-size:19px;color:var(--amber-dark)">${a.sap}</span></div>
@@ -3403,13 +3406,6 @@ function openArticleDetail(id) {
         ${(a.stockMin||a.stockMax) ? `<div class="detail-row"><span class="label">Seuils</span><span style="font-size:12px;color:var(--text2)">Min : <strong>${a.stockMin||0}</strong> · Max : <strong>${a.stockMax||0}</strong></span></div>` : ''}
       </div>
     </div>
-    ${a.photoEmplacement ? `
-    <div style="margin-top:16px">
-      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📍 Emplacement / catalogue fournisseur</div>
-      <div class="article-detail-img" style="height:180px;cursor:zoom-in" onclick="openPhotoZoom('${a.photoEmplacement}', event)">
-        <img src="${cloudinaryOptimized(a.photoEmplacement,'w_700')}" alt="Emplacement de ${escapeHtml(a.desc)}">
-      </div>
-    </div>` : ''}
     <div style="margin-top:16px">
       <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">Compatibilité &amp; caractéristiques</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px">
@@ -4574,12 +4570,62 @@ function downloadBLPdf() {
   showNotif('📥', 'PDF téléchargé', o.blNumero||'');
 }
 
-function openPhotoZoom(url, e) {
+// Visionneuse photo. Accepte soit une URL unique (usage historique : outils,
+// kits...), soit un tableau d'URLs — dans ce dernier cas, des flèches
+// apparaissent pour naviguer entre les images (ex: photo de la pièce +
+// photo/capture d'écran d'emplacement). Les entrées vides sont ignorées,
+// donc appeler cette fonction avec [a.photo, a.photoEmplacement] est sûr
+// même si la 2e n'existe pas — le carrousel ne s'affiche que s'il y a
+// effectivement plus d'une image.
+let zoomImages = [];
+let zoomIndex = 0;
+
+function openPhotoZoom(urlOrArray, e) {
   if(e) e.stopPropagation();
-  if(!url) return;
-  document.getElementById('photo-zoom-img').src = url;
+  zoomImages = (Array.isArray(urlOrArray) ? urlOrArray : [urlOrArray]).filter(Boolean);
+  if(!zoomImages.length) return;
+  zoomIndex = 0;
+  renderZoomImage();
   openModal('modal-photo-zoom');
 }
+
+// Ouvre la visionneuse pour une pièce donnée avec sa photo principale et,
+// si elle existe, son image d'emplacement — dans cet ordre.
+function openArticlePhotoZoom(articleId, e) {
+  const a = DB.articles.find(x => x.id === articleId);
+  if(!a) return;
+  openPhotoZoom([a.photo, a.photoEmplacement], e);
+}
+
+function renderZoomImage() {
+  document.getElementById('photo-zoom-img').src = cloudinaryOptimized(zoomImages[zoomIndex], 'w_1600');
+  const multi = zoomImages.length > 1;
+  const prevBtn = document.getElementById('zoom-prev-btn');
+  const nextBtn = document.getElementById('zoom-next-btn');
+  const dots = document.getElementById('zoom-dots');
+  prevBtn.style.display = multi ? 'flex' : 'none';
+  nextBtn.style.display = multi ? 'flex' : 'none';
+  dots.style.display = multi ? 'flex' : 'none';
+  if(multi) {
+    dots.innerHTML = zoomImages.map((_, i) =>
+      `<span style="width:8px;height:8px;border-radius:50%;background:${i === zoomIndex ? 'white' : 'rgba(255,255,255,0.4)'}"></span>`
+    ).join('');
+  }
+}
+
+function zoomPhotoNav(delta) {
+  if(zoomImages.length < 2) return;
+  zoomIndex = (zoomIndex + delta + zoomImages.length) % zoomImages.length;
+  renderZoomImage();
+}
+
+// Navigation au clavier (← →) quand la visionneuse est ouverte
+document.addEventListener('keydown', (e) => {
+  const modal = document.getElementById('modal-photo-zoom');
+  if(!modal || !modal.classList.contains('open')) return;
+  if(e.key === 'ArrowLeft') zoomPhotoNav(-1);
+  else if(e.key === 'ArrowRight') zoomPhotoNav(1);
+});
 
 function markPrepared(orderId) {
   const o = DB.orders.find(x => x.id === orderId);
