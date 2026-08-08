@@ -169,6 +169,13 @@
   /* ══════════════ ARTICLE CARD ══════════════ */
   .article-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
   .article-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; transition: box-shadow 0.18s, transform 0.18s; box-shadow: var(--shadow); }
+  .category-tile { flex: 0 0 auto; width: 108px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px 10px; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-lg); cursor: pointer; transition: all 0.15s; text-align: center; }
+  .category-tile:hover { border-color: var(--primary); transform: translateY(-2px); box-shadow: var(--shadow); }
+  .category-tile.active { border-color: var(--primary); background: var(--primary-light, #eef4ff); box-shadow: var(--shadow); }
+  .category-tile .cat-icon { font-size: 26px; }
+  .category-tile .cat-label { font-size: 11.5px; font-weight: 600; color: var(--text2); line-height: 1.25; }
+  .category-tile .cat-count { font-size: 10.5px; color: var(--text3); }
+  @media (max-width: 640px) { .category-tile { width: 84px; padding: 10px 6px 8px; } .category-tile .cat-icon { font-size: 22px; } .category-tile .cat-label { font-size: 10.5px; } }
   .article-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
   .article-img { height: 160px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 44px; position: relative; overflow: hidden; }
   .article-img img { width: 100%; height: 100%; object-fit: contain; }
@@ -710,6 +717,7 @@
 
       <!-- CATALOG -->
       <div class="view" id="view-catalog">
+        <div id="category-tiles-row" style="display:flex;gap:10px;overflow-x:auto;padding:14px 2px 6px;-webkit-overflow-scrolling:touch"></div>
         <div class="topbar" id="catalog-toolbar" style="border:none;padding:12px 0;margin-bottom:16px;background:var(--bg);z-index:40;">
           <div class="search-bar" style="flex:1">
             <span>🔍</span>
@@ -748,8 +756,6 @@
               <option value="rotation">🔄 Rotation (plus demandées en premier)</option>
               <option value="rotation-asc">🔄 Rotation (moins demandées en premier)</option>
               <option value="nom">Nom (A → Z)</option>
-              <option value="stock-desc">Stock (décroissant)</option>
-              <option value="stock-asc">Stock (croissant)</option>
             </select>
           </div>
           <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
@@ -1171,20 +1177,6 @@
         <div class="form-group">
           <label>🔄 Rappel de retour (optionnel)</label>
           <input type="text" id="art-alerte" placeholder="ex: Retour Fournisseur" oninput="uppercaseInput(this)">
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-          <div class="form-group">
-            <label>Stock actuel</label>
-            <input type="number" id="art-stock" min="0" value="0">
-          </div>
-          <div class="form-group">
-            <label>Seuil min</label>
-            <input type="number" id="art-stock-min" min="0" value="0" placeholder="Min">
-          </div>
-          <div class="form-group">
-            <label>Seuil max</label>
-            <input type="number" id="art-stock-max" min="0" value="0" placeholder="Max">
-          </div>
         </div>
       </div>
     </div>
@@ -2116,12 +2108,12 @@ const DB = {
     { id:'u4', login:'10002', name:'Sophie MARTIN', matricule:'10002', tel:'+32 470 77 88 99', email:'s.martin@stib.be', role:'magasinier', magasin:'2C', active:true, statut:'actif', perms:['dashboard','catalog','kits','tools','myloans','cart','myorders','orders','loansmgr','deliveries','notifications','messages','profile'] },
   ],
   articles: [
-    { id:'a1', sap:'10001234', desc:'Filtre à huile moteur', fournisseur:'MANN-FILTER', fournisseurRef:'W940/25', magasin:'2K', emplacement:'A1-E2-C3', keywords:'filtre huile moteur lubrification', busStandard:true, busArticule:true, serialise:false, reparable:false, chimique:false, stock:12, photo:'' },
-    { id:'a2', sap:'10002345', desc:'Plaquettes de frein avant', fournisseur:'TEXTAR', fournisseurRef:'2485702', magasin:'2K', emplacement:'B2-E1-C1', keywords:'frein plaquette avant disque', busStandard:true, busArticule:false, serialise:false, reparable:true, chimique:false, stock:8, photo:'' },
-    { id:'a3', sap:'10003456', desc:'Alternateur 24V 100A', fournisseur:'VALEO', fournisseurRef:'439575', magasin:'2C', emplacement:'C1-E3-C2', keywords:'alternateur electrique charge batterie', busStandard:true, busArticule:true, serialise:true, reparable:true, chimique:false, stock:3, photo:'' },
-    { id:'a4', sap:'10004567', desc:'Liquide de refroidissement 5L', fournisseur:'TOTAL', fournisseurRef:'RF-5L', magasin:'2B', emplacement:'D3-E1-C4', keywords:'liquide refroidissement radiateur coolant', busStandard:true, busArticule:true, serialise:false, reparable:false, chimique:true, stock:20, photo:'' },
-    { id:'a5', sap:'10005678', desc:'Courroie de distribution', fournisseur:'GATES', fournisseurRef:'K015580XS', magasin:'2K', emplacement:'A4-E2-C1', keywords:'courroie distribution timing belt', busStandard:false, busArticule:true, serialise:false, reparable:false, chimique:false, stock:5, photo:'' },
-    { id:'a6', sap:'10006789', desc:'Amortisseur avant gauche', fournisseur:'MONROE', fournisseurRef:'E1095', magasin:'2D', emplacement:'E2-E1-C3', keywords:'amortisseur suspension avant gauche', busStandard:true, busArticule:false, serialise:true, reparable:true, chimique:false, stock:4, photo:'' },
+    { id:'a1', sap:'10001234', desc:'Filtre à huile moteur', fournisseur:'MANN-FILTER', fournisseurRef:'W940/25', magasin:'2K', emplacement:'A1-E2-C3', keywords:'filtre huile moteur lubrification', busStandard:true, busArticule:true, serialise:false, reparable:false, chimique:false, photo:'' },
+    { id:'a2', sap:'10002345', desc:'Plaquettes de frein avant', fournisseur:'TEXTAR', fournisseurRef:'2485702', magasin:'2K', emplacement:'B2-E1-C1', keywords:'frein plaquette avant disque', busStandard:true, busArticule:false, serialise:false, reparable:true, chimique:false, photo:'' },
+    { id:'a3', sap:'10003456', desc:'Alternateur 24V 100A', fournisseur:'VALEO', fournisseurRef:'439575', magasin:'2C', emplacement:'C1-E3-C2', keywords:'alternateur electrique charge batterie', busStandard:true, busArticule:true, serialise:true, reparable:true, chimique:false, photo:'' },
+    { id:'a4', sap:'10004567', desc:'Liquide de refroidissement 5L', fournisseur:'TOTAL', fournisseurRef:'RF-5L', magasin:'2B', emplacement:'D3-E1-C4', keywords:'liquide refroidissement radiateur coolant', busStandard:true, busArticule:true, serialise:false, reparable:false, chimique:true, photo:'' },
+    { id:'a5', sap:'10005678', desc:'Courroie de distribution', fournisseur:'GATES', fournisseurRef:'K015580XS', magasin:'2K', emplacement:'A4-E2-C1', keywords:'courroie distribution timing belt', busStandard:false, busArticule:true, serialise:false, reparable:false, chimique:false, photo:'' },
+    { id:'a6', sap:'10006789', desc:'Amortisseur avant gauche', fournisseur:'MONROE', fournisseurRef:'E1095', magasin:'2D', emplacement:'E2-E1-C3', keywords:'amortisseur suspension avant gauche', busStandard:true, busArticule:false, serialise:true, reparable:true, chimique:false, photo:'' },
   ],
   orders: [
     {
@@ -2379,11 +2371,10 @@ function loadCart() {
     const remote = DB.carts && DB.carts[currentUser.id];
     const saved = localStorage.getItem('bpm_cart_' + currentUser.id);
     cart = remote ? remote : (saved ? JSON.parse(saved) : []);
-    // Nettoyer les articles qui n'existent plus en stock
-    cart = cart.filter(c => {
-      const a = DB.articles.find(x => x.id === c.id);
-      return a && a.stock > 0;
-    });
+    // Nettoyer les articles qui n'existent plus dans le catalogue (supprimés
+    // entre-temps) — la notion de stock n'entre plus en compte, la
+    // disponibilité réelle est vérifiée par le magasinier à la préparation.
+    cart = cart.filter(c => DB.articles.some(x => x.id === c.id));
   } catch(e) { cart = []; }
 }
 
@@ -2397,10 +2388,7 @@ function syncCartFromRemote() {
   if(!remote) return;
   const remoteJSON = JSON.stringify(remote);
   if(remoteJSON === JSON.stringify(cart)) return;
-  cart = remote.filter(c => {
-    const a = DB.articles.find(x => x.id === c.id);
-    return a && a.stock > 0;
-  });
+  cart = remote.filter(c => DB.articles.some(x => x.id === c.id));
   updateCartBadge();
   if(document.getElementById('view-cart') && document.getElementById('view-cart').classList.contains('active')) {
     renderCartView();
@@ -3290,6 +3278,53 @@ function populateCategorieFilter() {
   if(!DB.settings.categories) DB.settings.categories = [];
   const current = sel.value;
   sel.innerHTML = '<option value="">Toutes catégories</option>' + DB.settings.categories.map(c=>`<option value="${c}"${c===current?' selected':''}>${c}</option>`).join('');
+  renderCategoryTiles();
+}
+
+// Icônes pour les organes du bus les plus courants — porte d'entrée visuelle
+// du catalogue, pensée pour un mécanicien qui raisonne par zone du véhicule
+// (moteur, freinage...) plutôt que par référence SAP. Catégorie inconnue ou
+// ajoutée par l'admin sans icône prévue → pictogramme générique 📦.
+const CATEGORY_ICONS = {
+  'Moteur': '⚙️',
+  'Freinage': '🛑',
+  'Électrique': '⚡',
+  'Suspension': '🔩',
+  'Carrosserie': '🚌',
+  'Pneumatique': '🛞',
+};
+function categoryIcon(name) {
+  return CATEGORY_ICONS[name] || '📦';
+}
+
+function renderCategoryTiles() {
+  const row = document.getElementById('category-tiles-row');
+  if(!row) return;
+  const categories = (DB.settings && DB.settings.categories) || [];
+  const current = document.getElementById('filter-categorie') ? document.getElementById('filter-categorie').value : '';
+  const counts = {};
+  DB.articles.forEach(a => { if(a.categorie) counts[a.categorie] = (counts[a.categorie]||0) + 1; });
+
+  const allTile = `
+    <div class="category-tile ${!current ? 'active' : ''}" onclick="selectCategoryTile('')">
+      <span class="cat-icon">🗂️</span>
+      <span class="cat-label">Toutes</span>
+      <span class="cat-count">${DB.articles.length}</span>
+    </div>`;
+
+  row.innerHTML = allTile + categories.map(c => `
+    <div class="category-tile ${current === c ? 'active' : ''}" onclick="selectCategoryTile('${c.replace(/'/g,"\\'")}')">
+      <span class="cat-icon">${categoryIcon(c)}</span>
+      <span class="cat-label">${escapeHtml(c)}</span>
+      <span class="cat-count">${counts[c] || 0}</span>
+    </div>`).join('');
+}
+
+function selectCategoryTile(c) {
+  const sel = document.getElementById('filter-categorie');
+  if(!sel) return;
+  sel.value = c;
+  filterArticles();
 }
 
 function populateFournisseurFilter() {
@@ -3391,10 +3426,6 @@ function filterArticles() {
     catalogRotationMap = null;
     if(sort === 'nom') {
       arts.sort((a, b) => (a.desc || '').localeCompare(b.desc || '', 'fr'));
-    } else if(sort === 'stock-desc') {
-      arts.sort((a, b) => (b.stock || 0) - (a.stock || 0));
-    } else if(sort === 'stock-asc') {
-      arts.sort((a, b) => (a.stock || 0) - (b.stock || 0));
     }
   }
 
@@ -3409,6 +3440,7 @@ function filterArticles() {
   // juste agrandir la tranche affichée, sans refaire tout le filtrage.
   catalogFilteredArts = arts;
   catalogRenderLimit = CATALOG_PAGE_SIZE;
+  renderCategoryTiles();
   renderArticleGrid(q);
 }
 
@@ -3443,7 +3475,6 @@ function renderArticleGrid(q) {
     <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
       <div class="article-img" ${(a.photo || a.photoEmplacement) ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
         ${(a.photo || a.photoEmplacement) ? `<img src="${cloudinaryOptimized(a.photo || a.photoEmplacement,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
-        ${a.stock <= 2 ? `<span class="badge badge-red" style="position:absolute;top:8px;right:8px">Stock faible</span>` : ''}
         ${catalogRotationMap ? `<span class="badge" style="position:absolute;bottom:6px;left:6px;background:var(--navy);color:white">🔄 ${catalogRotationMap[a.id] || 0}</span>` : ''}
         ${a.photoEmplacement ? `<span title="Photo d'emplacement disponible" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>` : ''}
         ${a.photo ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.5);color:white;font-size:10px;padding:2px 6px;border-radius:4px">🔍 Agrandir</span>` : ''}
@@ -3466,9 +3497,7 @@ function renderArticleGrid(q) {
         </div>
         <div class="article-footer">
           <div class="article-location">📍 ${escapeHtml(getMagasinLabel(a.magasin))} · ${escapeHtml(a.emplacement)}</div>
-          <span class="badge ${a.stock > 0 ? 'badge-green' : 'badge-red'}">${a.stock > 0 ? a.stock + ' en stock' : 'Rupture'}</span>
         </div>
-        ${a.stock > 0 ? `
         <div onclick="event.stopPropagation()" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px">
           <div style="display:flex;align-items:center;gap:6px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);padding:2px 6px">
             <button onclick="event.stopPropagation();cardQtyChange('${a.id}',-1)" style="background:none;border:none;cursor:pointer;font-size:16px;font-weight:700;color:var(--text2);padding:0 4px;line-height:1">−</button>
@@ -3476,7 +3505,7 @@ function renderArticleGrid(q) {
             <button onclick="event.stopPropagation();cardQtyChange('${a.id}',1)" style="background:none;border:none;cursor:pointer;font-size:16px;font-weight:700;color:var(--text2);padding:0 4px;line-height:1">+</button>
           </div>
           <button onclick="event.stopPropagation();addToCartFromCard('${a.id}')" style="flex:1;padding:7px 10px;background:var(--primary);color:white;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;transition:background .15s" onmouseover="this.style.background='var(--primary-dark)'" onmouseout="this.style.background='var(--primary)'">🛒 Panier</button>
-        </div>` : ''}
+        </div>
       </div>
     </div>`).join('') + (remaining > 0 ? `
     <div style="grid-column:1/-1;text-align:center;padding:20px">
@@ -3496,22 +3525,22 @@ function renderArticleMovements(articleId) {
   if(!movements.length) {
     return `
     <div style="margin-top:16px">
-      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📊 Historique des mouvements</div>
-      <div style="font-size:12px;color:var(--text3)">Aucun mouvement enregistré pour cette pièce.</div>
+      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📊 Historique des sorties</div>
+      <div style="font-size:12px;color:var(--text3)">Aucune sortie enregistrée pour cette pièce.</div>
     </div>`;
   }
   return `
     <div style="margin-top:16px">
-      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📊 Historique des mouvements${getArticleMovements(articleId).length > 15 ? ' <span style="font-weight:400;color:var(--text3)">(15 derniers)</span>' : ''}</div>
+      <div style="margin-bottom:8px;font-weight:500;font-size:13px;color:var(--text2)">📊 Historique des sorties${getArticleMovements(articleId).length > 15 ? ' <span style="font-weight:400;color:var(--text3)">(15 dernières)</span>' : ''}</div>
       <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:10px">
         ${movements.map(m => `
           <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border)">
-            <span style="font-size:16px">${stockMovementIcon(m.type)}</span>
+            <span style="font-size:16px">📤</span>
             <div style="flex:1;min-width:0">
-              <div style="font-size:12.5px;font-weight:600">${stockMovementLabel(m.type)}${m.detail ? ' · ' + escapeHtml(m.detail) : ''}</div>
+              <div style="font-size:12.5px;font-weight:600">${m.detail ? escapeHtml(m.detail) : 'Sortie'}</div>
               <div style="font-size:11px;color:var(--text3)">${new Date(m.date).toLocaleString('fr-FR')} · ${escapeHtml(m.user)}</div>
             </div>
-            <span class="badge ${m.delta > 0 ? 'badge-green' : m.delta < 0 ? 'badge-red' : 'badge-gray'}" style="white-space:nowrap">${m.delta > 0 ? '+' : ''}${m.delta} → ${m.stockAfter}</span>
+            <span class="badge badge-red" style="white-space:nowrap">− ${Math.abs(m.qty)}</span>
           </div>`).join('')}
       </div>
     </div>`;
@@ -3536,8 +3565,6 @@ function openArticleDetail(id) {
         <div class="detail-row"><span class="label">Réf. fournisseur</span><span>${escapeHtml(a.fournisseurRef) || '—'}</span></div>
         <div class="detail-row"><span class="label">Magasin</span><span class="badge badge-blue">${escapeHtml(getMagasinLabel(a.magasin))}</span></div>
         <div class="detail-row"><span class="label">Emplacement</span><span>📍 ${escapeHtml(a.emplacement)}</span></div>
-        <div class="detail-row"><span class="label">Stock</span><span class="badge ${a.stock>0?'badge-green':'badge-red'}">${a.stock > 0 ? a.stock + ' unité(s)' : 'Rupture'}</span></div>
-        ${(a.stockMin||a.stockMax) ? `<div class="detail-row"><span class="label">Seuils</span><span style="font-size:12px;color:var(--text2)">Min : <strong>${a.stockMin||0}</strong> · Max : <strong>${a.stockMax||0}</strong></span></div>` : ''}
       </div>
     </div>
     <div style="margin-top:16px">
@@ -3571,9 +3598,7 @@ function openArticleDetail(id) {
     </div>
   `;
   let footer = `<button class="btn btn-outline" onclick="closeModal('modal-article-detail')">Fermer</button>`;
-  if(a.stock > 0) {
-    footer += ` <button class="btn btn-primary" onclick="addToCart('${a.id}')">🛒 Ajouter au panier</button>`;
-  }
+  footer += ` <button class="btn btn-primary" onclick="addToCart('${a.id}')">🛒 Ajouter au panier</button>`;
   if(canEdit) {
     footer += ` <button class="btn btn-outline" onclick="closeModal('modal-article-detail');openArticleModal('${a.id}')">✏️ Modifier</button>`;
     footer += ` <button class="btn btn-sm" style="background:var(--danger-light);color:var(--danger);border:1px solid var(--danger)" onclick="deleteArticle('${a.id}')">Supprimer</button>`;
@@ -3589,13 +3614,16 @@ function changeQty(d) {
   document.getElementById('detail-qty').textContent = detailQty;
 }
 
-// qty par carte (indépendant de detailQty)
+// qty par carte (indépendant de detailQty). Plafond fixe raisonnable (99) —
+// plus de plafond basé sur le stock puisque cette notion n'existe plus ;
+// c'est au magasinier d'ajuster la quantité réelle remise à la livraison.
+const CARD_QTY_MAX = 99;
 const cardQtys = {};
 function cardQtyChange(id, d) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
   if(!cardQtys[id]) cardQtys[id] = 1;
-  cardQtys[id] = Math.max(1, Math.min(a.stock, cardQtys[id] + d));
+  cardQtys[id] = Math.max(1, Math.min(CARD_QTY_MAX, cardQtys[id] + d));
   const el = document.getElementById('card-qty-' + id);
   if(el) el.textContent = cardQtys[id];
 }
@@ -3675,9 +3703,6 @@ function openArticleModal(id) {
   document.getElementById('art-emplacement').value = a ? a.emplacement : '';
   document.getElementById('art-keywords').value = a ? a.keywords : '';
   document.getElementById('art-alerte').value = a ? (a.alerte || '') : '';
-  document.getElementById('art-stock').value = a ? a.stock : 0;
-  document.getElementById('art-stock-min').value = a ? (a.stockMin||0) : 0;
-  document.getElementById('art-stock-max').value = a ? (a.stockMax||0) : 0;
   setChk('chk-standard', a ? a.busStandard : false);
   setChk('chk-articule', a ? a.busArticule : false);
   setChk('chk-serialise', a ? a.serialise : false);
@@ -4143,9 +4168,6 @@ async function saveArticle() {
     chimique: isChk('chk-chimique'),
     alerte: sanitizeInput(document.getElementById('art-alerte').value),
     marquesBus: getSelectedMarques(),
-    stock: parseInt(document.getElementById('art-stock').value) || 0,
-    stockMin: parseInt(document.getElementById('art-stock-min').value) || 0,
-    stockMax: parseInt(document.getElementById('art-stock-max').value) || 0,
     photo: currentPhotoUrl,
     photoEmplacement: currentPhotoEmplacementUrl
   };
@@ -4176,19 +4198,12 @@ async function saveArticle() {
 
   if(editingArticleId) {
     const idx = DB.articles.findIndex(a => a.id === editingArticleId);
-    const ancienStock = DB.articles[idx].stock;
     DB.articles[idx] = { ...DB.articles[idx], ...data };
-    if(data.stock !== ancienStock) {
-      logStockMovement(editingArticleId, 'ajustement', data.stock - ancienStock, data.stock, 'Modification manuelle de la fiche article');
-    }
     if(sapChanged && existingArticle && window.fbReleaseSAP) window.fbReleaseSAP(existingArticle.sap); // libère l'ancienne référence, plus utilisée
     addActivity('✏️', `Pièce modifiée : ${desc}`);
   } else {
     data.id = articleId;
     DB.articles.push(data);
-    if(data.stock > 0) {
-      logStockMovement(data.id, 'creation', data.stock, data.stock, 'Création de la pièce');
-    }
     addActivity('➕', `Nouvelle pièce ajoutée : ${desc}`);
   }
   save();
@@ -4875,12 +4890,12 @@ function confirmDelivery() {
   o.deliveredAt = Date.now();
   o.otNumber = ot;
 
-  // Decrease stock
+  // Trace les sorties (traçabilité qui-a-pris-quoi-quand) — sans notion de
+  // stock à décrémenter, cette notion n'existe plus dans l'appli.
   o.items.forEach(item => {
     const a = DB.articles.find(x => x.id === item.articleId);
     if(a) {
-      a.stock = Math.max(0, a.stock - item.qty);
-      logStockMovement(a.id, 'sortie', -item.qty, a.stock, `OT ${ot} · ${o.agentName}`);
+      logStockMovement(a.id, item.qty, `OT ${ot} · ${o.agentName}`);
     }
   });
 
@@ -5704,7 +5719,6 @@ async function processImportData(csvText, fmt) {
       'serialise': 'serialise',
       'reparable': 'reparable',
       'chimique': 'chimique',
-      'stock': 'stock',
     };
 
     const colIdx = {};
@@ -5748,13 +5762,12 @@ async function processImportData(csvText, fmt) {
         serialise: colIdx.serialise !== undefined ? toBool(row[colIdx.serialise]) : false,
         reparable: colIdx.reparable !== undefined ? toBool(row[colIdx.reparable]) : false,
         chimique: colIdx.chimique !== undefined ? toBool(row[colIdx.chimique]) : false,
-        stock: colIdx.stock !== undefined ? (parseInt(row[colIdx.stock])||0) : 0,
         photo: ''
       };
 
       // Contrôle de doublon par SAP : la pièce existante n'est PLUS écrasée,
       // elle est simplement ignorée pour ne jamais perdre de données déjà en
-      // place (stock, emplacement, photo...) suite à un import.
+      // place (emplacement, photo...) suite à un import.
       const existing = DB.articles.find(a => a.sap === sap);
       if(existing) {
         skipped++;
@@ -5767,9 +5780,6 @@ async function processImportData(csvText, fmt) {
         // pour l'ajout/modification manuelle d'une pièce à la fois.
         article.id = 'a' + Date.now() + Math.random().toString(36).slice(2,6);
         DB.articles.push(article);
-        if(article.stock > 0) {
-          logStockMovement(article.id, 'import', article.stock, article.stock, 'Import fichier — création');
-        }
         created++;
       }
     }
@@ -5856,10 +5866,6 @@ function filterKits() {
   grid.innerHTML = kits.map(k => {
     const articlesCount = (k.articles||[]).length;
     const totalQty = (k.articles||[]).reduce((s,a)=>s+a.qty,0);
-    const available = (k.articles||[]).every(ka => {
-      const a = DB.articles.find(x=>x.id===ka.articleId);
-      return a && a.stock >= ka.qty;
-    });
     return `
     <div class="article-card" onclick="openKitDetail('${k.id}')" style="cursor:pointer">
       <div class="article-img" style="background:var(--navy);color:var(--amber);flex-direction:column;gap:4px;font-size:36px">
@@ -5876,7 +5882,6 @@ function filterKits() {
         </div>
         <div class="article-footer">
           <div class="article-location">🔧 ${articlesCount} article(s) · ${totalQty} pièce(s)</div>
-          <span class="badge ${available ? 'badge-green' : 'badge-red'}">${available ? 'Disponible' : 'Stock insuffisant'}</span>
         </div>
         <div onclick="event.stopPropagation()" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
           <button onclick="event.stopPropagation();addKitToCart('${k.id}')" style="width:100%;padding:8px;background:var(--navy);color:white;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">
@@ -5923,7 +5928,6 @@ function openKitDetail(id) {
             <div style="font-size:11px;color:var(--text3)">SAP: ${escapeHtml(ka.article.sap)} · ${escapeHtml(getMagasinLabel(ka.article.magasin))} · ${escapeHtml(ka.article.emplacement)}</div>
           </div>
           <span class="badge badge-blue">× ${ka.qty}</span>
-          <span class="badge ${ka.article.stock >= ka.qty ? 'badge-green' : 'badge-red'}">${ka.article.stock} en stock</span>
         </div>`).join('')}
     </div>`;
 
@@ -7004,17 +7008,17 @@ function addActivity(icon, msg) {
 }
 
 // =============================
-// HISTORIQUE DES MOUVEMENTS DE STOCK (traçabilité/audit)
+// HISTORIQUE DES SORTIES (traçabilité/audit — qui a pris quoi, quand)
 // =============================
-// type attendu : 'sortie' | 'entree' | 'ajustement' | 'creation' | 'import'
-// delta : variation de stock (négative pour une sortie)
-// detail : texte libre (référence OT, agent, raison de l'ajustement...)
+// Il n'y a plus de notion de "stock" à faire évoluer : ce journal trace
+// uniquement les sorties réelles liées à une livraison de commande. detail :
+// texte libre (référence OT, agent...).
 if(!DB.stockMovements) DB.stockMovements = [];
-function logStockMovement(articleId, type, delta, stockAfter, detail) {
+function logStockMovement(articleId, qty, detail) {
   if(!DB.stockMovements) DB.stockMovements = [];
   DB.stockMovements.push({
     id: 'mv' + Date.now() + Math.random().toString(36).slice(2,6),
-    articleId, type, delta, stockAfter,
+    articleId, qty,
     date: Date.now(),
     user: currentUser ? currentUser.name : 'Système',
     detail: detail || ''
@@ -7029,14 +7033,6 @@ function getArticleMovements(articleId) {
   return (DB.stockMovements || [])
     .filter(m => m.articleId === articleId)
     .sort((a,b) => b.date - a.date);
-}
-
-function stockMovementIcon(type) {
-  return type === 'sortie' ? '📤' : type === 'entree' ? '📥' : type === 'creation' ? '➕' : type === 'import' ? '📋' : '✏️';
-}
-
-function stockMovementLabel(type) {
-  return type === 'sortie' ? 'Sortie' : type === 'entree' ? 'Entrée' : type === 'creation' ? 'Création' : type === 'import' ? 'Import' : 'Ajustement';
 }
 
 function showNotif(icon, title, msg) {
