@@ -3441,18 +3441,22 @@ function selectCategoryTile(c) {
   filterArticles();
 }
 
-// Petit lien sous les tuiles d'organe, visible seulement quand une catégorie
-// précise est sélectionnée ET qu'elle a au moins un schéma associé — pas la
-// peine d'encombrer l'écran quand on regarde "Toutes" les catégories, ou une
-// catégorie qui n'a pas encore de schéma.
+// Petit lien sous les tuiles d'organe, visible dès qu'une catégorie précise
+// est sélectionnée (masqué seulement sur "Toutes") — reste visible même sans
+// aucun schéma existant, sinon impossible d'ajouter le tout premier pour cet
+// organe (le bouton "+ Ajouter" vit à l'intérieur de la liste ouverte par ce
+// lien).
 function renderSchemaHint() {
   const row = document.getElementById('schema-hint-row');
   if(!row) return;
   const current = document.getElementById('filter-categorie') ? document.getElementById('filter-categorie').value : '';
+  if(!current) { row.style.display = 'none'; row.innerHTML = ''; return; }
   const schemas = (DB.schemas || []).filter(s => s.categorie === current);
-  if(!current || !schemas.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
   row.style.display = 'block';
-  row.innerHTML = `<button class="btn btn-outline" style="font-size:12.5px;padding:7px 12px" onclick="openSchemaList('${current.replace(/'/g,"\\'")}')">📐 ${schemas.length} schéma${schemas.length>1?'s':''} disponible${schemas.length>1?'s':''} pour ${escapeHtml(current)}</button>`;
+  const label = schemas.length
+    ? `📐 ${schemas.length} schéma${schemas.length>1?'s':''} disponible${schemas.length>1?'s':''} pour ${escapeHtml(current)}`
+    : `📐 Aucun schéma pour ${escapeHtml(current)} — en ajouter un`;
+  row.innerHTML = `<button class="btn btn-outline" style="font-size:12.5px;padding:7px 12px" onclick="openSchemaList('${current.replace(/'/g,"\\'")}')">${label}</button>`;
 }
 
 function openSchemaList(categorie) {
