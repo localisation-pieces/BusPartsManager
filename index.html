@@ -1015,6 +1015,25 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">📤 Export du catalogue</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Télécharge un fichier Excel avec toutes les pièces (SAP, désignation, catégorie actuelle, fournisseur, emplacement...). Utile pour un état des lieux, un partage externe, ou pour préparer une correction en masse.</p>
+            <button class="btn btn-outline" onclick="exportCatalogueExcel()">📤 Exporter le catalogue (Excel)</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">🔧 Corriger les catégories en masse</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Catégorie</strong> — pour mettre à jour <u>uniquement le champ catégorie</u> des pièces correspondantes. Aucune autre donnée n'est touchée. Les SAP absents du fichier, ou absents du catalogue, restent inchangés.
+            </p>
+            <input type="file" id="category-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startCategoryFixImport(this.files[0])">
+            <button class="btn btn-outline" onclick="document.getElementById('category-fix-input').click()">🔧 Importer le fichier de correction</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">🛠️ Outils de maintenance du catalogue</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Corrige en une fois le magasin des pièces qui n'ont pas encore "2K – Pike" comme magasin (ex : pièces importées sans magasin renseigné).</p>
@@ -1253,6 +1272,17 @@
     <div id="bulk-photo-log" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12.5px;font-family:var(--font-mono)"></div>
     <div style="margin-top:18px;text-align:right">
       <button class="btn btn-outline" id="bulk-photo-close-btn" onclick="closeModal('modal-bulk-photo')" disabled>Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-category-fix">
+  <div class="modal" style="max-width:560px">
+    <h3 style="margin-bottom:14px">🔧 Correction des catégories</h3>
+    <p id="category-fix-progress-text" style="font-size:13px;color:var(--text2);margin-bottom:14px">Préparation...</p>
+    <div id="category-fix-log" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12.5px;font-family:var(--font-mono)"></div>
+    <div style="margin-top:18px;text-align:right">
+      <button class="btn btn-outline" id="category-fix-close-btn" onclick="closeModal('modal-category-fix')" disabled>Fermer</button>
     </div>
   </div>
 </div>
@@ -5858,6 +5888,127 @@ async function deleteUser(id) {
 // incomplet, ancienne fiche...) — ne touche jamais une pièce qui a déjà un
 // autre magasin défini (ex: 2C – Haren), pour ne pas déplacer à tort de
 // vraies pièces d'un autre dépôt.
+// Export du catalogue complet en Excel — utile pour un état des lieux, un
+// partage externe, ou (comme aujourd'hui) pour préparer une correction en
+// masse basée sur une source externe (fichier fournisseur, etc.).
+function exportCatalogueExcel() {
+  const rows = [['SAP', 'Désignation', 'Catégorie', 'Fournisseur', 'Réf. fournisseur', 'Magasin', 'Emplacement', 'Mots-clés']];
+  DB.articles.forEach(a => {
+    rows.push([a.sap||'', a.desc||'', a.categorie||'', a.fournisseur||'', a.fournisseurRef||'', a.magasin||'', a.emplacement||'', a.keywords||'']);
+  });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [12,40,18,18,18,10,18,30].map(w => ({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws, 'Catalogue');
+  const fileName = 'Catalogue_BusPartsManager_' + new Date().toISOString().slice(0,10) + '.xlsx';
+  XLSX.writeFile(wb, fileName);
+  showNotif('📤', 'Export réussi', DB.articles.length + ' pièce(s) → ' + fileName);
+}
+
+// Import de correction : met à jour UNIQUEMENT le champ catégorie des pièces
+// dont le SAP correspond à une ligne du fichier. Un fichier attendu à 2
+// colonnes (SAP, Catégorie) — l'ordre des colonnes et la casse des en-têtes
+// n'ont pas d'importance, seule leur présence compte. Toute pièce dont le
+// SAP n'apparaît pas dans le fichier (ou dont le SAP du fichier n'existe pas
+// dans le catalogue) n'est pas touchée.
+function startCategoryFixImport(file) {
+  if(!file) return;
+  document.getElementById('category-fix-input').value = '';
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let csv;
+      if(ext === 'csv') {
+        csv = e.target.result;
+      } else {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        csv = XLSX.utils.sheet_to_csv(ws, {skipHidden:true});
+      }
+      processCategoryFix(csv);
+    } catch(err) {
+      alert('Erreur de lecture du fichier : ' + err.message);
+    }
+  };
+  if(ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function processCategoryFix(csvText) {
+  const log = document.getElementById('category-fix-log');
+  const text = document.getElementById('category-fix-progress-text');
+  const closeBtn = document.getElementById('category-fix-close-btn');
+  log.innerHTML = '';
+  closeBtn.disabled = true;
+  openModal('modal-category-fix');
+
+  function addLog(line, color) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(color) div.style.color = color;
+    log.appendChild(div);
+  }
+
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+  if(lines.length < 2) {
+    text.textContent = 'Fichier vide ou illisible.';
+    closeBtn.disabled = false;
+    return;
+  }
+
+  const headers = parseCSVRow(lines[0]).map(h => h.trim().toLowerCase());
+  const sapIdx = headers.findIndex(h => h.includes('sap'));
+  const catIdx = headers.findIndex(h => h.includes('cat'));
+  if(sapIdx === -1 || catIdx === -1) {
+    text.textContent = '';
+    addLog('❌ Colonnes "SAP" et/ou "Catégorie" introuvables dans l\'en-tête du fichier.', 'var(--danger)');
+    closeBtn.disabled = false;
+    return;
+  }
+
+  let updated = 0, notFoundInCatalogue = 0, emptyRows = 0, newCategories = new Set();
+  const existingCategories = new Set(DB.settings.categories || []);
+
+  for(let i = 1; i < lines.length; i++) {
+    const cols = parseCSVRow(lines[i]);
+    const sapRaw = (cols[sapIdx] || '').trim();
+    const catRaw = (cols[catIdx] || '').trim();
+    if(!sapRaw || !catRaw) { emptyRows++; continue; }
+    const sap = sapRaw.replace(/[^0-9]/g, '').slice(0, 8);
+    const article = DB.articles.find(a => a.sap === sap);
+    if(!article) { notFoundInCatalogue++; continue; }
+    if(article.categorie !== catRaw) {
+      addLog(`✅ SAP ${sap} — "${article.categorie || '(vide)'}" → "${catRaw}"`, 'var(--primary)');
+      article.categorie = catRaw;
+      updated++;
+    }
+    if(!existingCategories.has(catRaw)) { newCategories.add(catRaw); existingCategories.add(catRaw); }
+  }
+
+  // Les nouvelles catégories rencontrées sont ajoutées automatiquement à la
+  // liste des catégories (Administration) pour que les tuiles du catalogue
+  // les affichent immédiatement, sans étape manuelle supplémentaire.
+  if(newCategories.size) {
+    if(!DB.settings.categories) DB.settings.categories = [];
+    DB.settings.categories.push(...newCategories);
+  }
+
+  text.textContent = `Terminé : ${updated} catégorie(s) mise(s) à jour, ${notFoundInCatalogue} SAP introuvable(s) dans le catalogue, ${emptyRows} ligne(s) ignorée(s) (vide).`;
+  addLog('—————————————————', 'var(--text3)');
+  addLog(`Résumé : ${updated} mise(s) à jour · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
+  if(newCategories.size) addLog(`Nouvelle(s) catégorie(s) ajoutée(s) automatiquement : ${[...newCategories].join(', ')}`, 'var(--text2)');
+
+  if(updated > 0) {
+    save();
+    filterArticles();
+    populateCategorieFilter();
+  }
+  closeBtn.disabled = false;
+}
+
 function fixMissingMagasin() {
   const targetCode = '2K';
   const toFix = DB.articles.filter(a => !a.magasin || !a.magasin.trim());
