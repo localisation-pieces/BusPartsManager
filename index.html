@@ -743,6 +743,14 @@
               <option value="avecphoto">📷 Avec photo</option>
               <option value="sansphoto">🚫 Sans photo</option>
             </select>
+            <select class="filter-select" id="filter-sort" onchange="filterArticles()">
+              <option value="">Tri par défaut</option>
+              <option value="rotation">🔄 Rotation (plus demandées en premier)</option>
+              <option value="rotation-asc">🔄 Rotation (moins demandées en premier)</option>
+              <option value="nom">Nom (A → Z)</option>
+              <option value="stock-desc">Stock (décroissant)</option>
+              <option value="stock-asc">Stock (croissant)</option>
+            </select>
           </div>
           <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
           <button class="btn btn-outline staff-only" onclick="document.getElementById('import-file-input').click()" title="Importer depuis Excel ou CSV">📥 Importer</button>
@@ -3305,6 +3313,33 @@ function matchesSearchTerms(text, query) {
   return terms.every(term => text.includes(term));
 }
 
+// Rotation d'une pièce = quantité totale sortie sur TOUT l'historique des
+// commandes (pas seulement 30 jours comme le "Top 5" du tableau de bord) —
+// pour un tri global du catalogue, l'historique complet donne un classement
+// plus stable qu'une fenêtre glissante d'un mois, où une pièce très
+// demandée habituellement mais pas commandée récemment se retrouverait
+// injustement en bas de liste.
+// Mis en cache et invalidé automatiquement dès que le nombre de commandes
+// change (nouvelle commande passée, etc.) pour éviter de tout recalculer à
+// chaque frappe dans la recherche.
+let articleRotationCache = null;
+let articleRotationCacheOrderCount = -1;
+function computeArticleRotationCounts() {
+  if(articleRotationCache && articleRotationCacheOrderCount === DB.orders.length) {
+    return articleRotationCache;
+  }
+  const rotation = {};
+  DB.orders.forEach(o => {
+    if(o.status === 'cancelled') return;
+    (o.items || []).forEach(item => {
+      rotation[item.articleId] = (rotation[item.articleId] || 0) + (item.qty || 0);
+    });
+  });
+  articleRotationCache = rotation;
+  articleRotationCacheOrderCount = DB.orders.length;
+  return rotation;
+}
+
 // Attend une courte pause dans la frappe avant de relancer le filtrage —
 // évite de recalculer/re-afficher sur les 2500+ pièces à chaque caractère
 // tapé, ce qui devenait sensible depuis que le catalogue a bien grossi.
@@ -3325,6 +3360,7 @@ function filterArticles() {
   const categorie = document.getElementById('filter-categorie') ? document.getElementById('filter-categorie').value : '';
   const fournisseur = document.getElementById('filter-fournisseur') ? document.getElementById('filter-fournisseur').value : '';
   const fournisseurRefQuery = document.getElementById('filter-fournisseur-ref') ? document.getElementById('filter-fournisseur-ref').value.trim().toLowerCase() : '';
+  const sort = document.getElementById('filter-sort') ? document.getElementById('filter-sort').value : '';
 
   let arts = DB.articles.filter(a => {
     const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.categorie||'')+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
@@ -3344,23 +3380,71 @@ function filterArticles() {
     return true;
   });
 
+  if(sort === 'rotation' || sort === 'rotation-asc') {
+    const rotation = computeArticleRotationCounts();
+    catalogRotationMap = rotation;
+    arts.sort((a, b) => {
+      const diff = (rotation[a.id] || 0) - (rotation[b.id] || 0);
+      return sort === 'rotation' ? -diff : diff;
+    });
+  } else {
+    catalogRotationMap = null;
+    if(sort === 'nom') {
+      arts.sort((a, b) => (a.desc || '').localeCompare(b.desc || '', 'fr'));
+    } else if(sort === 'stock-desc') {
+      arts.sort((a, b) => (b.stock || 0) - (a.stock || 0));
+    } else if(sort === 'stock-asc') {
+      arts.sort((a, b) => (a.stock || 0) - (b.stock || 0));
+    }
+  }
+
   // Le badge affiche le nombre de résultats correspondant au(x) filtre(s)
   // actif(s) — utile par exemple pour savoir combien de pièces ont déjà une
   // photo, en filtrant sur "📷 Avec photo" — pas juste le total du catalogue.
   const badge = document.getElementById('catalog-count-badge');
   if(badge) { badge.textContent = arts.length; badge.style.display = arts.length ? '' : 'none'; }
 
+  // Chaque nouveau filtrage repart de la première page. On garde la liste
+  // complète en mémoire (catalogFilteredArts) pour que "Charger plus" puisse
+  // juste agrandir la tranche affichée, sans refaire tout le filtrage.
+  catalogFilteredArts = arts;
+  catalogRenderLimit = CATALOG_PAGE_SIZE;
+  renderArticleGrid(q);
+}
+
+// Affiche le catalogue par pages de CATALOG_PAGE_SIZE pièces au lieu de tout
+// injecter dans le DOM d'un coup — avec 2500+ articles, construire et
+// afficher la totalité du HTML à chaque frappe devenait de plus en plus
+// sensible à mesure que le catalogue grossit. Le rendu reste identique,
+// juste étalé sur plusieurs pages via le bouton "Charger plus".
+const CATALOG_PAGE_SIZE = 60;
+let catalogFilteredArts = [];
+let catalogRenderLimit = CATALOG_PAGE_SIZE;
+let catalogRotationMap = null; // non-null uniquement quand le tri "Rotation" est actif
+
+function loadMoreArticles() {
+  catalogRenderLimit += CATALOG_PAGE_SIZE;
+  const q = (document.getElementById('search-input').value || '').toLowerCase();
+  renderArticleGrid(q);
+}
+
+function renderArticleGrid(q) {
+  const arts = catalogFilteredArts;
   const grid = document.getElementById('article-grid');
   if(!arts.length) {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🔍</div><p>Aucun article trouvé</p></div>';
     return;
   }
 
-  grid.innerHTML = arts.map(a => `
+  const visible = arts.slice(0, catalogRenderLimit);
+  const remaining = arts.length - visible.length;
+
+  grid.innerHTML = visible.map(a => `
     <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
       <div class="article-img" ${(a.photo || a.photoEmplacement) ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
         ${(a.photo || a.photoEmplacement) ? `<img src="${cloudinaryOptimized(a.photo || a.photoEmplacement,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
         ${a.stock <= 2 ? `<span class="badge badge-red" style="position:absolute;top:8px;right:8px">Stock faible</span>` : ''}
+        ${catalogRotationMap ? `<span class="badge" style="position:absolute;bottom:6px;left:6px;background:var(--navy);color:white">🔄 ${catalogRotationMap[a.id] || 0}</span>` : ''}
         ${a.photoEmplacement ? `<span title="Photo d'emplacement disponible" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>` : ''}
         ${a.photo ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.5);color:white;font-size:10px;padding:2px 6px;border-radius:4px">🔍 Agrandir</span>` : ''}
       </div>
@@ -3394,7 +3478,10 @@ function filterArticles() {
           <button onclick="event.stopPropagation();addToCartFromCard('${a.id}')" style="flex:1;padding:7px 10px;background:var(--primary);color:white;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;transition:background .15s" onmouseover="this.style.background='var(--primary-dark)'" onmouseout="this.style.background='var(--primary)'">🛒 Panier</button>
         </div>` : ''}
       </div>
-    </div>`).join('');
+    </div>`).join('') + (remaining > 0 ? `
+    <div style="grid-column:1/-1;text-align:center;padding:20px">
+      <button class="btn btn-outline" onclick="loadMoreArticles()">Charger plus (${remaining} restante${remaining > 1 ? 's' : ''})</button>
+    </div>` : '');
 }
 
 function highlight(text, q) {
