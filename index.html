@@ -3292,6 +3292,19 @@ function populateFournisseurFilter() {
   sel.innerHTML = '<option value="">Tous fournisseurs</option>' + DB.settings.fournisseurs.map(f=>`<option value="${f}"${f===current?' selected':''}>${f}</option>`).join('');
 }
 
+// Une recherche peut contenir plusieurs mots séparés par une virgule ou un
+// espace (ex: "frein, avant" ou "frein avant") — chaque terme doit être
+// retrouvé quelque part dans le texte pour que le résultat soit gardé.
+// Avant, une recherche cherchait la requête entière comme un seul bloc
+// collé, qui ne correspondait jamais si les mots n'étaient pas côte à côte
+// dans le texte, exactement dans cet ordre — ce qui rendait en pratique
+// la recherche par plusieurs mots-clés inutilisable.
+function matchesSearchTerms(text, query) {
+  const terms = query.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+  if(!terms.length) return true;
+  return terms.every(term => text.includes(term));
+}
+
 // Attend une courte pause dans la frappe avant de relancer le filtrage —
 // évite de recalculer/re-afficher sur les 2500+ pièces à chaque caractère
 // tapé, ce qui devenait sensible depuis que le catalogue a bien grossi.
@@ -3315,7 +3328,7 @@ function filterArticles() {
 
   let arts = DB.articles.filter(a => {
     const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.categorie||'')+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
-    if(q && !text.includes(q)) return false;
+    if(q && !matchesSearchTerms(text, q)) return false;
     if(mag && a.magasin !== mag) return false;
     if(bus === 'standard' && !a.busStandard) return false;
     if(bus === 'articule' && !a.busArticule) return false;
@@ -5878,12 +5891,10 @@ function filterKitArticleOptions() {
   if(!search || search.length < 2) { box.style.display = 'none'; box.innerHTML = ''; return; }
 
   const dejaDansLeKit = new Set(kitArticlesData.map(ka => ka.articleId));
-  const filtered = DB.articles.filter(a =>
-    (a.desc || '').toLowerCase().includes(search)
-    || (a.sap || '').toLowerCase().includes(search)
-    || (a.fournisseurRef || '').toLowerCase().includes(search)
-    || (a.keywords || '').toLowerCase().includes(search)
-  ).slice(0, 20);
+  const filtered = DB.articles.filter(a => {
+    const text = (a.desc+' '+a.sap+' '+(a.fournisseurRef||'')+' '+(a.keywords||'')).toLowerCase();
+    return matchesSearchTerms(text, search);
+  }).slice(0, 20);
 
   box.style.display = '';
   if(!filtered.length) {
@@ -6104,7 +6115,7 @@ function filterTools() {
   const mag = document.getElementById('filter-tools-magasin').value;
   let tools = DB.tools.filter(t => {
     const text = (t.code+' '+t.nom+' '+(t.marque||'')+' '+t.keywords+' '+t.emplacement).toLowerCase();
-    if(q && !text.includes(q)) return false;
+    if(q && !matchesSearchTerms(text, q)) return false;
     if(mag && t.magasin !== mag) return false;
     return true;
   });
@@ -7015,7 +7026,7 @@ function globalSearch() {
   // Articles
   DB.articles.filter(a => {
     const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+(a.fournisseurRef||'')+' '+a.keywords+' '+a.emplacement+(a.marquesBus||[]).join(' ')).toLowerCase();
-    return text.includes(q);
+    return matchesSearchTerms(text, q);
   }).slice(0,5).forEach(a => results.push({
     type:'article', icon:'⚙️', title:escapeHtml(a.desc), sub:`SAP ${escapeHtml(a.sap)} · ${escapeHtml(getMagasinLabel(a.magasin))} · ${escapeHtml(a.emplacement)}`,
     action:`closeGlobalSearch();openArticleDetail('${a.id}')`
@@ -7037,7 +7048,7 @@ function globalSearch() {
   // Outils
   DB.tools.filter(t => {
     const text = (t.code+' '+t.nom+' '+(t.marque||'')+' '+t.keywords+' '+t.emplacement).toLowerCase();
-    return text.includes(q);
+    return matchesSearchTerms(text, q);
   }).slice(0,3).forEach(t => results.push({
     type:'outil', icon:'🛠️', title:escapeHtml(t.nom), sub:`${escapeHtml(t.code)} · ${escapeHtml(getMagasinLabel(t.magasin))} · ${escapeHtml(t.emplacement)}`,
     action:`closeGlobalSearch();openToolDetail('${t.id}')`
