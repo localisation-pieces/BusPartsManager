@@ -3760,18 +3760,33 @@ function extractSapFromFilename(filename) {
   return match ? match[0] : null;
 }
 
+// Devine quel champ de la pièce ce fichier doit remplir, d'après son
+// extension : une capture d'écran (typiquement .png, ex: Windows Snipping
+// Tool ou capture du catalogue fournisseur) va dans "photoEmplacement" ;
+// une vraie photo (.jpg/.jpeg/.webp/...) va dans "photo". Ça évite qu'un
+// import mélangeant les deux types n'écrase le mauvais champ — chaque
+// fichier ne peut plus toucher que le champ qui correspond à son type.
+function bulkPhotoTargetField(filename) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  return ext === 'png' ? 'photoEmplacement' : 'photo';
+}
+
 async function startBulkPhotoImport(fileList) {
   const files = Array.from(fileList || []);
   if(!files.length) return;
 
   // Un seul choix pour tout le lot (pas une question par doublon, ce qui
   // serait ingérable avec plusieurs centaines de photos) : soit on remplace
-  // systématiquement une photo déjà présente, soit on ignore ces pièces-là.
+  // systématiquement une image déjà présente, soit on ignore ces pièces-là.
+  // Ce choix s'applique séparément à chaque champ (photo / photoEmplacement)
+  // — voir bulkPhotoTargetField : un .png ne touche jamais la photo
+  // principale, et inversement.
   const remplacerExistantes = confirm(
-    `${files.length} photo(s) sélectionnée(s).\n\n` +
-    `Certaines pièces ont peut-être déjà une photo.\n\n` +
-    `OK = remplacer les photos déjà présentes\n` +
-    `Annuler = ignorer les pièces qui ont déjà une photo (ne garder que les nouvelles)`
+    `${files.length} fichier(s) sélectionné(s).\n\n` +
+    `Les fichiers .png sont traités comme des captures d'écran d'emplacement, les autres (.jpg, .jpeg...) comme des photos de pièce — chacun va dans son propre champ, sans écraser l'autre.\n\n` +
+    `Certaines pièces ont peut-être déjà une image dans le champ concerné.\n\n` +
+    `OK = remplacer les images déjà présentes\n` +
+    `Annuler = ignorer les pièces qui ont déjà une image dans ce champ (ne garder que les nouvelles)`
   );
 
   const bar = document.getElementById('bulk-photo-progress-bar');
@@ -3810,16 +3825,18 @@ async function startBulkPhotoImport(fileList) {
       introuvable++;
       continue;
     }
-    if(article.photo && !remplacerExistantes) {
-      addLog(`⏭️ ${file.name} — ${article.desc} a déjà une photo, ignorée`, 'var(--text3)');
+    const targetField = bulkPhotoTargetField(file.name);
+    const fieldLabel = targetField === 'photoEmplacement' ? "photo d'emplacement" : 'photo principale';
+    if(article[targetField] && !remplacerExistantes) {
+      addLog(`⏭️ ${file.name} — ${article.desc} a déjà une ${fieldLabel}, ignorée`, 'var(--text3)');
       ignore++;
       continue;
     }
     try {
       const blob = await compressImageToBlob(file, 900, 0.75);
       const url = await uploadPhotoToCloudinary(article.id, blob);
-      article.photo = url;
-      addLog(`✅ ${file.name} → ${article.desc} (SAP ${sap})`, 'var(--primary)');
+      article[targetField] = url;
+      addLog(`✅ ${file.name} → ${article.desc} (SAP ${sap}) — ${fieldLabel}`, 'var(--primary)');
       ok++;
     } catch(e) {
       addLog(`❌ ${file.name} — échec de l'envoi : ${e.message}`, 'var(--danger)');
@@ -3828,7 +3845,7 @@ async function startBulkPhotoImport(fileList) {
   }
 
   bar.style.width = '100%';
-  text.textContent = `Terminé : ${ok} photo(s) ajoutée(s), ${ignore} ignorée(s) (déjà une photo), ${introuvable} sans pièce correspondante, ${erreur} erreur(s).`;
+  text.textContent = `Terminé : ${ok} image(s) ajoutée(s), ${ignore} ignorée(s) (déjà une image), ${introuvable} sans pièce correspondante, ${erreur} erreur(s).`;
   addLog('—————————————————', 'var(--text3)');
   addLog(`Résumé : ${ok} OK · ${ignore} ignorée(s) · ${introuvable} SAP introuvable · ${erreur} erreur(s)`, 'var(--text)');
 
