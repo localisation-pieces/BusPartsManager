@@ -176,6 +176,18 @@
   .category-tile .cat-label { font-size: 11.5px; font-weight: 600; color: var(--text2); line-height: 1.25; }
   .category-tile .cat-count { font-size: 10.5px; color: var(--text3); }
   @media (max-width: 640px) { .category-tile { width: 84px; padding: 10px 6px 8px; } .category-tile .cat-icon { font-size: 22px; } .category-tile .cat-label { font-size: 10.5px; } }
+  .schema-img-wrap { position: relative; display: inline-block; max-width: 100%; user-select: none; touch-action: none; }
+  .schema-img-wrap img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
+  .schema-hotspot { position: absolute; border: 2px solid var(--primary); background: rgba(59,130,246,0.18); border-radius: 4px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+  .schema-hotspot:hover { background: rgba(59,130,246,0.38); border-color: var(--primary-dark, var(--primary)); }
+  .schema-hotspot-label { position: absolute; bottom: 100%; left: 0; background: var(--navy); color: white; font-size: 10.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.1s; margin-bottom: 3px; }
+  .schema-hotspot:hover .schema-hotspot-label { opacity: 1; }
+  .schema-hotspot-editor { position: absolute; border: 2px dashed var(--danger); background: rgba(239,68,68,0.18); border-radius: 4px; cursor: pointer; }
+  .schema-hotspot-editor .hs-del { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; background: var(--danger); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; }
+  .schema-thumb-card { border: 1.5px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; background: var(--surface); transition: box-shadow .15s, transform .15s; }
+  .schema-thumb-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+  .schema-thumb-card img { width: 100%; height: 90px; object-fit: cover; display: block; background: var(--surface2); }
+  .schema-thumb-card .schema-thumb-title { font-size: 11.5px; font-weight: 600; padding: 8px; line-height: 1.3; }
   .article-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
   .article-img { height: 160px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 44px; position: relative; overflow: hidden; }
   .article-img img { width: 100%; height: 100%; object-fit: contain; }
@@ -718,6 +730,7 @@
       <!-- CATALOG -->
       <div class="view" id="view-catalog">
         <div id="category-tiles-row" style="display:flex;gap:10px;overflow-x:auto;padding:14px 2px 6px;-webkit-overflow-scrolling:touch"></div>
+        <div id="schema-hint-row" style="display:none;margin:0 2px 10px"></div>
         <div class="topbar" id="catalog-toolbar" style="border:none;padding:12px 0;margin-bottom:16px;background:var(--bg);z-index:40;">
           <div class="search-bar" style="flex:1">
             <span>🔍</span>
@@ -986,6 +999,16 @@
             </p>
             <input type="file" id="bulk-photo-input" accept="image/*" multiple style="display:none" onchange="startBulkPhotoImport(this.files)">
             <button class="btn btn-outline" onclick="document.getElementById('bulk-photo-input').click()">📸 Sélectionner les photos à importer</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">📐 Schémas de localisation par organe</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Vue d'ensemble de tous les schémas, tous organes confondus. Pour en ajouter un nouveau, le plus simple reste de passer par le catalogue : sélectionne l'organe concerné (tuile en haut du catalogue), puis "📐 Ajouter un schéma".
+            </p>
+            <div id="admin-schema-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px"></div>
           </div>
         </div>
 
@@ -1549,6 +1572,96 @@
   <button id="zoom-next-btn" onclick="event.stopPropagation();zoomPhotoNav(1)" style="display:none;position:absolute;right:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">›</button>
   <div id="zoom-dots" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);gap:8px"></div>
   <button onclick="closeModal('modal-photo-zoom')" style="position:absolute;top:24px;right:32px;background:rgba(255,255,255,0.15);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer">✕</button>
+</div>
+
+<!-- SCHEMA LIST MODAL — schémas éclatés disponibles pour l'organe sélectionné -->
+<div class="modal-overlay" id="modal-schema-list">
+  <div class="modal" style="width:640px">
+    <div class="modal-header">
+      <h3 id="schema-list-title">📐 Schémas</h3>
+      <button class="modal-close" onclick="closeModal('modal-schema-list')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="schema-list-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px"></div>
+      <button class="btn btn-outline staff-only" id="schema-add-btn" style="margin-top:16px;width:100%" onclick="openSchemaEditor(null)">+ Ajouter un schéma pour cet organe</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCHEMA VIEWER MODAL — image avec zones cliquables renvoyant vers la fiche article -->
+<div class="modal-overlay" id="modal-schema-viewer">
+  <div class="modal" style="width:min(900px,94vw)">
+    <div class="modal-header">
+      <h3 id="schema-viewer-title">📐 Schéma</h3>
+      <button class="modal-close" onclick="closeModal('modal-schema-viewer')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Touchez une zone du schéma pour ouvrir la pièce correspondante.</p>
+      <div class="schema-img-wrap" id="schema-viewer-imgwrap">
+        <img id="schema-viewer-img" src="" alt="Schéma">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-schema-viewer')">Fermer</button>
+      <button class="btn btn-outline staff-only" id="schema-viewer-edit-btn" onclick="">✏️ Modifier ce schéma</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCHEMA EDITOR MODAL (admin/magasinier) — upload d'un schéma + zones cliquables -->
+<div class="modal-overlay" id="modal-schema-editor">
+  <div class="modal" style="width:min(960px,96vw)">
+    <div class="modal-header">
+      <h3 id="schema-editor-title">📐 Nouveau schéma</h3>
+      <button class="modal-close" onclick="closeModal('modal-schema-editor')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div class="form-group">
+          <label>Titre du schéma</label>
+          <input type="text" id="schema-titre" placeholder="ex: Positionnement des capteurs côté droit du moteur">
+        </div>
+        <div class="form-group">
+          <label>Organe</label>
+          <select id="schema-categorie"></select>
+        </div>
+      </div>
+
+      <div id="schema-upload-zone" class="form-group">
+        <label>Image du schéma</label>
+        <div id="schema-upload-wrap">
+          <label class="upload-label" for="schema-image-input"><span id="schema-upload-label-text">📐 Choisir une image de schéma</span></label>
+          <input type="file" id="schema-image-input" accept="image/*" onchange="previewSchemaImage(this)">
+        </div>
+      </div>
+
+      <div id="schema-editor-body" style="display:none">
+        <p style="font-size:12px;color:var(--text3);margin:10px 0">Clique-glisse sur le schéma pour dessiner une zone, puis choisis la pièce correspondante. Clique sur une zone existante (🗑️) pour la supprimer.</p>
+        <div class="schema-img-wrap" id="schema-editor-imgwrap">
+          <img id="schema-editor-img" src="" alt="Schéma" draggable="false">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" style="background:var(--danger-light);color:var(--danger);border:1px solid var(--danger)" id="schema-delete-btn" onclick="deleteCurrentSchema()">🗑️ Supprimer ce schéma</button>
+      <button class="btn btn-outline" onclick="closeModal('modal-schema-editor')">Annuler</button>
+      <button class="btn btn-primary" id="schema-save-btn" onclick="saveSchema()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mini-picker pour choisir l'article associé à une zone qu'on vient de dessiner -->
+<div class="modal-overlay" id="modal-hotspot-picker">
+  <div class="modal" style="width:420px">
+    <div class="modal-header">
+      <h3>Relier cette zone à une pièce</h3>
+      <button class="modal-close" onclick="cancelPendingHotspot()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="hotspot-article-search" placeholder="Rechercher par description, SAP, mots-clés..." oninput="filterHotspotArticleOptions()" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:14px">
+      <div id="hotspot-article-results" style="max-height:320px;overflow-y:auto;margin-top:10px"></div>
+    </div>
+  </div>
 </div>
 
 <!-- IMPORT MODAL -->
@@ -2172,7 +2285,8 @@ const DB = {
   ],
   loans: [],
   messages: [],
-  carts: {}
+  carts: {},
+  schemas: []
 };
 
 let currentUser = null;
@@ -3327,6 +3441,78 @@ function selectCategoryTile(c) {
   filterArticles();
 }
 
+// Petit lien sous les tuiles d'organe, visible seulement quand une catégorie
+// précise est sélectionnée ET qu'elle a au moins un schéma associé — pas la
+// peine d'encombrer l'écran quand on regarde "Toutes" les catégories, ou une
+// catégorie qui n'a pas encore de schéma.
+function renderSchemaHint() {
+  const row = document.getElementById('schema-hint-row');
+  if(!row) return;
+  const current = document.getElementById('filter-categorie') ? document.getElementById('filter-categorie').value : '';
+  const schemas = (DB.schemas || []).filter(s => s.categorie === current);
+  if(!current || !schemas.length) { row.style.display = 'none'; row.innerHTML = ''; return; }
+  row.style.display = 'block';
+  row.innerHTML = `<button class="btn btn-outline" style="font-size:12.5px;padding:7px 12px" onclick="openSchemaList('${current.replace(/'/g,"\\'")}')">📐 ${schemas.length} schéma${schemas.length>1?'s':''} disponible${schemas.length>1?'s':''} pour ${escapeHtml(current)}</button>`;
+}
+
+function openSchemaList(categorie) {
+  document.getElementById('schema-list-title').textContent = `📐 Schémas — ${categorie}`;
+  const grid = document.getElementById('schema-list-grid');
+  const schemas = (DB.schemas || []).filter(s => s.categorie === categorie);
+  if(!schemas.length) {
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>Aucun schéma pour cet organe pour le moment.</p></div>';
+  } else {
+    grid.innerHTML = schemas.map(s => `
+      <div class="schema-thumb-card" onclick="closeModal('modal-schema-list');openSchemaViewer('${s.id}')">
+        <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+        <div class="schema-thumb-title">${escapeHtml(s.titre)}</div>
+      </div>`).join('');
+  }
+  document.getElementById('schema-add-btn').setAttribute('onclick', `closeModal('modal-schema-list');openSchemaEditor(null,'${categorie.replace(/'/g,"\\'")}')`);
+  openModal('modal-schema-list');
+}
+
+// Construit les zones cliquables (hotspots) positionnées en % par-dessus une
+// image de schéma — réutilisé par la visionneuse (clic → fiche article) et
+// l'éditeur (clic → suppression de la zone). Les coordonnées en % (pas en
+// pixels) garantissent un positionnement correct quelle que soit la taille
+// d'affichage réelle de l'image (mobile, zoom, redimensionnement fenêtre).
+function renderHotspotsOverlay(wrapId, hotspots, mode) {
+  const wrap = document.getElementById(wrapId);
+  if(!wrap) return;
+  wrap.querySelectorAll('.schema-hotspot, .schema-hotspot-editor').forEach(el => el.remove());
+  (hotspots || []).forEach((h, i) => {
+    const el = document.createElement('div');
+    const style = `left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%`;
+    if(mode === 'edit') {
+      el.className = 'schema-hotspot-editor';
+      el.style.cssText = style;
+      el.innerHTML = `<span class="hs-del" onclick="event.stopPropagation();removeHotspot(${i})">✕</span>`;
+      el.title = h.label || '';
+    } else {
+      const a = DB.articles.find(x => x.id === h.articleId);
+      el.className = 'schema-hotspot';
+      el.style.cssText = style;
+      el.innerHTML = `<span class="schema-hotspot-label">${escapeHtml(a ? a.desc : (h.label||'Pièce introuvable'))}</span>`;
+      el.onclick = () => { if(a) { closeModal('modal-schema-viewer'); openArticleDetail(a.id); } };
+    }
+    wrap.appendChild(el);
+  });
+}
+
+let currentSchemaId = null;
+function openSchemaViewer(schemaId) {
+  const s = (DB.schemas || []).find(x => x.id === schemaId);
+  if(!s) return;
+  currentSchemaId = schemaId;
+  document.getElementById('schema-viewer-title').textContent = `📐 ${s.titre}`;
+  const img = document.getElementById('schema-viewer-img');
+  img.src = cloudinaryOptimized(s.image, 'w_1400');
+  img.onload = () => renderHotspotsOverlay('schema-viewer-imgwrap', s.hotspots, 'view');
+  document.getElementById('schema-viewer-edit-btn').setAttribute('onclick', `closeModal('modal-schema-viewer');openSchemaEditor('${s.id}')`);
+  openModal('modal-schema-viewer');
+}
+
 function populateFournisseurFilter() {
   const sel = document.getElementById('filter-fournisseur');
   if(!sel) return;
@@ -3441,6 +3627,7 @@ function filterArticles() {
   catalogFilteredArts = arts;
   catalogRenderLimit = CATALOG_PAGE_SIZE;
   renderCategoryTiles();
+  renderSchemaHint();
   renderArticleGrid(q);
 }
 
@@ -4038,6 +4225,231 @@ function removeEmplacementPhoto() {
   const lbl = document.getElementById('upload-label-text-2');
   if(lbl) lbl.textContent = '📍 Choisir une photo / capture d\'écran';
   document.getElementById('emplacement-remove-wrap').style.display = 'none';
+}
+
+// =============================
+// ÉDITEUR DE SCHÉMAS — image de vue éclatée + zones cliquables (hotspots)
+// reliées chacune à une pièce du catalogue. Coordonnées stockées en % de la
+// largeur/hauteur de l'image (pas en pixels), pour rester justes quelle que
+// soit la taille d'affichage (mobile, zoom, fenêtre redimensionnée).
+// =============================
+let schemaEditingId = null;
+let schemaPendingImageBlob = null;
+let schemaCurrentImageUrl = '';
+let schemaHotspots = [];
+let schemaDrawStart = null; // {xPct, yPct} pendant un cliqué-glissé en cours
+
+function openSchemaEditor(schemaId, defaultCategorie) {
+  schemaEditingId = schemaId;
+  const catSel = document.getElementById('schema-categorie');
+  catSel.innerHTML = (DB.settings.categories || []).map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+  const s = schemaId ? (DB.schemas || []).find(x => x.id === schemaId) : null;
+  document.getElementById('schema-editor-title').textContent = s ? '📐 Modifier le schéma' : '📐 Nouveau schéma';
+  document.getElementById('schema-titre').value = s ? s.titre : '';
+  if(s) catSel.value = s.categorie;
+  else if(defaultCategorie) catSel.value = defaultCategorie;
+
+  schemaPendingImageBlob = null;
+  schemaCurrentImageUrl = s ? s.image : '';
+  schemaHotspots = s ? JSON.parse(JSON.stringify(s.hotspots || [])) : [];
+
+  document.getElementById('schema-image-input').value = '';
+  const lbl = document.getElementById('schema-upload-label-text');
+  const body = document.getElementById('schema-editor-body');
+  const img = document.getElementById('schema-editor-img');
+  document.getElementById('schema-delete-btn').style.display = s ? 'inline-flex' : 'none';
+
+  if(schemaCurrentImageUrl) {
+    lbl.textContent = '📐 Changer l\'image du schéma';
+    img.src = cloudinaryOptimized(schemaCurrentImageUrl, 'w_1400');
+    body.style.display = 'block';
+    img.onload = () => renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+  } else {
+    lbl.textContent = '📐 Choisir une image de schéma';
+    body.style.display = 'none';
+    img.src = '';
+  }
+  openModal('modal-schema-editor');
+}
+
+async function previewSchemaImage(input) {
+  const file = input.files[0];
+  if(!file) return;
+  const lbl = document.getElementById('schema-upload-label-text');
+  lbl.textContent = '⏳ Compression…';
+  try {
+    // Un schéma technique doit rester lisible (texte, petits repères) — on
+    // compresse moins fort qu'une simple photo de pièce.
+    const blob = await compressImageToBlob(file, 1600, 0.85);
+    schemaPendingImageBlob = blob;
+    const img = document.getElementById('schema-editor-img');
+    img.src = URL.createObjectURL(blob);
+    document.getElementById('schema-editor-body').style.display = 'block';
+    lbl.textContent = '📐 Changer l\'image du schéma';
+    img.onload = () => renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+  } catch(e) {
+    lbl.textContent = schemaCurrentImageUrl ? '📐 Changer l\'image du schéma' : '📐 Choisir une image de schéma';
+    alert("Impossible de traiter cette image. Réessayez avec une autre.");
+  }
+}
+
+// --- Dessin des zones (pointer events : fonctionne à la souris ET au tactile) ---
+(function initSchemaDrawing() {
+  const wrap = document.getElementById('schema-editor-imgwrap');
+  if(!wrap) return;
+
+  function pctFromEvent(e) {
+    const img = document.getElementById('schema-editor-img');
+    const rect = img.getBoundingClientRect();
+    const x = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.min(100, Math.max(0, ((e.clientY - rect.top) / rect.height) * 100));
+    return { x, y };
+  }
+
+  wrap.addEventListener('pointerdown', (e) => {
+    if(e.target.closest('.hs-del')) return; // laisser le bouton supprimer gérer son propre clic
+    if(e.target.id !== 'schema-editor-img' && e.target !== wrap) return;
+    const p = pctFromEvent(e);
+    schemaDrawStart = p;
+    e.preventDefault();
+  });
+
+  wrap.addEventListener('pointermove', (e) => {
+    if(!schemaDrawStart) return;
+    const p = pctFromEvent(e);
+    const x = Math.min(schemaDrawStart.x, p.x), y = Math.min(schemaDrawStart.y, p.y);
+    const w = Math.abs(p.x - schemaDrawStart.x), h = Math.abs(p.y - schemaDrawStart.y);
+    let live = document.getElementById('schema-draw-live');
+    if(!live) {
+      live = document.createElement('div');
+      live.id = 'schema-draw-live';
+      live.className = 'schema-hotspot-editor';
+      wrap.appendChild(live);
+    }
+    live.style.cssText = `left:${x}%;top:${y}%;width:${w}%;height:${h}%`;
+  });
+
+  wrap.addEventListener('pointerup', (e) => {
+    if(!schemaDrawStart) return;
+    const p = pctFromEvent(e);
+    const x = Math.min(schemaDrawStart.x, p.x), y = Math.min(schemaDrawStart.y, p.y);
+    const w = Math.abs(p.x - schemaDrawStart.x), h = Math.abs(p.y - schemaDrawStart.y);
+    schemaDrawStart = null;
+    const live = document.getElementById('schema-draw-live');
+    if(live) live.remove();
+    // Zone trop petite = probablement un simple clic accidentel, pas un
+    // vrai cliqué-glissé intentionnel — on l'ignore.
+    if(w < 1.5 || h < 1.5) return;
+    schemaHotspots.push({ x, y, w, h, articleId: null, label: '' });
+    openHotspotPicker(schemaHotspots.length - 1);
+  });
+})();
+
+function removeHotspot(index) {
+  schemaHotspots.splice(index, 1);
+  renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+}
+
+// --- Mini-picker pour choisir la pièce reliée à la zone qu'on vient de dessiner ---
+let pendingHotspotIndex = null;
+function openHotspotPicker(index) {
+  pendingHotspotIndex = index;
+  document.getElementById('hotspot-article-search').value = '';
+  document.getElementById('hotspot-article-results').innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Tapez pour rechercher une pièce…</div>';
+  openModal('modal-hotspot-picker');
+  setTimeout(() => document.getElementById('hotspot-article-search').focus(), 100);
+}
+
+function cancelPendingHotspot() {
+  // Si l'utilisateur ferme sans choisir de pièce, la zone qu'il venait de
+  // dessiner n'a aucun sens toute seule — on la retire.
+  if(pendingHotspotIndex !== null && schemaHotspots[pendingHotspotIndex] && !schemaHotspots[pendingHotspotIndex].articleId) {
+    schemaHotspots.splice(pendingHotspotIndex, 1);
+  }
+  pendingHotspotIndex = null;
+  closeModal('modal-hotspot-picker');
+  renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+}
+
+function filterHotspotArticleOptions() {
+  const search = (document.getElementById('hotspot-article-search').value || '').toLowerCase().trim();
+  const box = document.getElementById('hotspot-article-results');
+  if(!search || search.length < 2) { box.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Tapez pour rechercher une pièce…</div>'; return; }
+  const filtered = DB.articles.filter(a => {
+    const text = (a.desc+' '+a.sap+' '+(a.fournisseurRef||'')+' '+(a.keywords||'')).toLowerCase();
+    return matchesSearchTerms(text, search);
+  }).slice(0, 20);
+  if(!filtered.length) {
+    box.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucune pièce trouvée pour "${escapeHtml(search)}"</div>`;
+    return;
+  }
+  box.innerHTML = filtered.map(a => `
+    <div onclick="chooseHotspotArticle('${a.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 8px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <div style="width:36px;height:36px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_80,h_80,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">${escapeHtml(a.desc)}</div>
+        <div style="font-size:11px;color:var(--text3)">SAP ${escapeHtml(a.sap)}</div>
+      </div>
+    </div>`).join('');
+}
+
+function chooseHotspotArticle(articleId) {
+  if(pendingHotspotIndex === null) return;
+  const a = DB.articles.find(x => x.id === articleId);
+  schemaHotspots[pendingHotspotIndex].articleId = articleId;
+  schemaHotspots[pendingHotspotIndex].label = a ? a.desc : '';
+  pendingHotspotIndex = null;
+  closeModal('modal-hotspot-picker');
+  renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+}
+
+async function saveSchema() {
+  const titre = sanitizeInput(document.getElementById('schema-titre').value);
+  const categorie = document.getElementById('schema-categorie').value;
+  if(!titre) { alert('Merci de donner un titre au schéma.'); return; }
+  if(!schemaPendingImageBlob && !schemaCurrentImageUrl) { alert('Merci d\'ajouter une image de schéma.'); return; }
+
+  const saveBtn = document.getElementById('schema-save-btn');
+  let imageUrl = schemaCurrentImageUrl;
+  if(schemaPendingImageBlob) {
+    saveBtn.disabled = true; saveBtn.textContent = '⏳ Envoi de l\'image…';
+    try {
+      imageUrl = await uploadPhotoToCloudinary('schema_' + Date.now(), schemaPendingImageBlob);
+    } catch(e) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer';
+      alert("Échec de l'envoi de l'image vers Cloudinary. Vérifiez la connexion, puis réessayez.\n\nDétail technique : " + (e && e.message ? e.message : e));
+      return;
+    }
+  }
+
+  const data = { titre, categorie, image: imageUrl, hotspots: schemaHotspots.filter(h => h.articleId) };
+
+  if(schemaEditingId) {
+    const idx = DB.schemas.findIndex(s => s.id === schemaEditingId);
+    if(idx >= 0) DB.schemas[idx] = { ...DB.schemas[idx], ...data };
+  } else {
+    data.id = 's' + Date.now() + Math.random().toString(36).slice(2,6);
+    if(!DB.schemas) DB.schemas = [];
+    DB.schemas.push(data);
+  }
+  save();
+  saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer';
+  closeModal('modal-schema-editor');
+  renderSchemaHint();
+  showNotif('📐', 'Schéma enregistré', titre);
+}
+
+function deleteCurrentSchema() {
+  if(!schemaEditingId) return;
+  if(!confirm('Supprimer définitivement ce schéma ? Cette action ne peut pas être annulée depuis l\'application.')) return;
+  DB.schemas = (DB.schemas || []).filter(s => s.id !== schemaEditingId);
+  save();
+  closeModal('modal-schema-editor');
+  renderSchemaHint();
+  showNotif('🗑️', 'Schéma supprimé', '');
 }
 
 // Transforme la saisie en majuscules au fur et à mesure de la frappe, tout en
@@ -5063,6 +5475,21 @@ const PAGE_LABELS = {
   settings: '🗂️ Paramètres'
 };
 
+function renderAdminSchemaList() {
+  const grid = document.getElementById('admin-schema-list');
+  if(!grid) return;
+  const schemas = DB.schemas || [];
+  if(!schemas.length) {
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>Aucun schéma créé pour le moment.</p></div>';
+    return;
+  }
+  grid.innerHTML = schemas.map(s => `
+    <div class="schema-thumb-card" onclick="openSchemaEditor('${s.id}')">
+      <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+      <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${escapeHtml(s.categorie)} · ${(s.hotspots||[]).length} pièce(s)</span></div>
+    </div>`).join('');
+}
+
 function renderAdmin(skipFreshFetch) {
   // Récupère les utilisateurs directement depuis le serveur à chaque
   // ouverture de cette page — plus fiable que d'attendre l'écouteur en
@@ -5113,6 +5540,8 @@ function renderAdmin(skipFreshFetch) {
   } else {
     pendingSection.style.display = 'none';
   }
+
+  renderAdminSchemaList();
 
   const el = document.getElementById('users-list');
   el.innerHTML = DB.users.filter(u => u.statut !== 'en_attente').map(u => {
