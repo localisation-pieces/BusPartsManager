@@ -169,13 +169,13 @@
   /* ══════════════ ARTICLE CARD ══════════════ */
   .article-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
   .article-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; transition: box-shadow 0.18s, transform 0.18s; box-shadow: var(--shadow); }
-  .category-tile { flex: 0 0 auto; width: 108px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px 10px; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-lg); cursor: pointer; transition: all 0.15s; text-align: center; }
+  .category-tile { flex: 0 0 auto; width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px 8px; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-lg); cursor: pointer; transition: all 0.15s; text-align: center; }
   .category-tile:hover { border-color: var(--primary); transform: translateY(-2px); box-shadow: var(--shadow); }
   .category-tile.active { border-color: var(--primary); background: var(--primary-light, #eef4ff); box-shadow: var(--shadow); }
-  .category-tile .cat-icon { font-size: 26px; }
-  .category-tile .cat-label { font-size: 11.5px; font-weight: 600; color: var(--text2); line-height: 1.25; }
-  .category-tile .cat-count { font-size: 10.5px; color: var(--text3); }
-  @media (max-width: 640px) { .category-tile { width: 84px; padding: 10px 6px 8px; } .category-tile .cat-icon { font-size: 22px; } .category-tile .cat-label { font-size: 10.5px; } }
+  .category-tile .cat-icon { font-size: 22px; }
+  .category-tile .cat-label { font-size: 11px; font-weight: 600; color: var(--text2); line-height: 1.2; }
+  .category-tile .cat-count { font-size: 10px; color: var(--text3); }
+  @media (max-width: 640px) { .category-tile { width: 76px; padding: 8px 5px 6px; } .category-tile .cat-icon { font-size: 19px; } .category-tile .cat-label { font-size: 10px; } }
   .schema-img-wrap { position: relative; display: inline-block; max-width: 100%; user-select: none; touch-action: none; }
   .schema-img-wrap img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
   .schema-hotspot { position: absolute; border: 2px solid var(--primary); background: rgba(59,130,246,0.18); border-radius: 4px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
@@ -729,9 +729,9 @@
 
       <!-- CATALOG -->
       <div class="view" id="view-catalog">
-        <div id="category-tiles-row" style="display:flex;gap:10px;overflow-x:auto;padding:14px 2px 6px;-webkit-overflow-scrolling:touch"></div>
-        <div id="schema-hint-row" style="display:none;margin:0 2px 10px"></div>
-        <div class="topbar" id="catalog-toolbar" style="border:none;padding:12px 0;margin-bottom:16px;background:var(--bg);z-index:40;flex-direction:column;align-items:stretch;gap:10px">
+        <div id="category-tiles-row" style="display:flex;gap:8px;overflow-x:auto;padding:10px 2px 4px;-webkit-overflow-scrolling:touch"></div>
+        <div id="schema-hint-row" style="display:none;margin:0 2px 8px"></div>
+        <div class="topbar" id="catalog-toolbar" style="border:none;padding:8px 0;margin-bottom:12px;background:var(--bg);z-index:40;flex-direction:column;align-items:stretch;gap:8px">
           <div style="display:flex;align-items:center;gap:12px">
             <div class="search-bar" style="flex:1">
               <span>🔍</span>
@@ -773,10 +773,12 @@
               <option value="nom">Nom (A → Z)</option>
             </select>
           </div>
-          <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
-          <button class="btn btn-outline staff-only" onclick="document.getElementById('import-file-input').click()" title="Importer depuis Excel ou CSV">📥 Importer</button>
-          <input type="file" id="import-file-input" accept=".xlsx,.csv" style="display:none" onchange="importArticles(this)">
-          <button class="btn btn-primary staff-only" onclick="openArticleModal()">+ Ajouter pièce</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
+            <button class="btn btn-outline staff-only" onclick="document.getElementById('import-file-input').click()" title="Importer depuis Excel ou CSV">📥 Importer</button>
+            <input type="file" id="import-file-input" accept=".xlsx,.csv" style="display:none" onchange="importArticles(this)">
+            <button class="btn btn-primary staff-only" onclick="openArticleModal()">+ Ajouter pièce</button>
+          </div>
         </div>
         <div class="article-grid" id="article-grid">
           <div class="empty-state"><div class="empty-icon">🔧</div><p>Aucun article trouvé</p></div>
@@ -982,6 +984,35 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">📤 Export du catalogue</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Télécharge un fichier Excel avec toutes les pièces (SAP, désignation, catégorie actuelle, fournisseur, emplacement...). Utile pour un état des lieux, un partage externe, ou pour préparer une correction en masse.</p>
+            <button class="btn btn-outline" onclick="exportCatalogueExcel()">📤 Exporter le catalogue (Excel)</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">🔧 Corriger les catégories en masse</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Catégorie</strong> — pour mettre à jour <u>uniquement le champ catégorie</u> des pièces correspondantes. Aucune autre donnée n'est touchée. Les SAP absents du fichier, ou absents du catalogue, restent inchangés.
+            </p>
+            <input type="file" id="category-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startCategoryFixImport(this.files[0])">
+            <button class="btn btn-outline" onclick="document.getElementById('category-fix-input').click()">🔧 Importer le fichier de correction</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">📐 Schémas de localisation par organe</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Vue d'ensemble de tous les schémas, tous organes confondus. Pour en ajouter un nouveau, le plus simple reste de passer par le catalogue : sélectionne l'organe concerné (tuile en haut du catalogue), puis "📐 Ajouter un schéma".
+            </p>
+            <div id="admin-schema-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px"></div>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">💾 Sauvegarde</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
@@ -1001,35 +1032,6 @@
             </p>
             <input type="file" id="bulk-photo-input" accept="image/*" multiple style="display:none" onchange="startBulkPhotoImport(this.files)">
             <button class="btn btn-outline" onclick="document.getElementById('bulk-photo-input').click()">📸 Sélectionner les photos à importer</button>
-          </div>
-        </div>
-
-        <div class="admin-section">
-          <div class="admin-section-header">📐 Schémas de localisation par organe</div>
-          <div class="admin-section-body">
-            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
-              Vue d'ensemble de tous les schémas, tous organes confondus. Pour en ajouter un nouveau, le plus simple reste de passer par le catalogue : sélectionne l'organe concerné (tuile en haut du catalogue), puis "📐 Ajouter un schéma".
-            </p>
-            <div id="admin-schema-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px"></div>
-          </div>
-        </div>
-
-        <div class="admin-section">
-          <div class="admin-section-header">📤 Export du catalogue</div>
-          <div class="admin-section-body">
-            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Télécharge un fichier Excel avec toutes les pièces (SAP, désignation, catégorie actuelle, fournisseur, emplacement...). Utile pour un état des lieux, un partage externe, ou pour préparer une correction en masse.</p>
-            <button class="btn btn-outline" onclick="exportCatalogueExcel()">📤 Exporter le catalogue (Excel)</button>
-          </div>
-        </div>
-
-        <div class="admin-section">
-          <div class="admin-section-header">🔧 Corriger les catégories en masse</div>
-          <div class="admin-section-body">
-            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
-              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Catégorie</strong> — pour mettre à jour <u>uniquement le champ catégorie</u> des pièces correspondantes. Aucune autre donnée n'est touchée. Les SAP absents du fichier, ou absents du catalogue, restent inchangés.
-            </p>
-            <input type="file" id="category-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startCategoryFixImport(this.files[0])">
-            <button class="btn btn-outline" onclick="document.getElementById('category-fix-input').click()">🔧 Importer le fichier de correction</button>
           </div>
         </div>
 
