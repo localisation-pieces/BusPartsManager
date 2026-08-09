@@ -1096,7 +1096,10 @@
           <div class="admin-section">
             <div class="admin-section-header">
               📂 Catégories
-              <button class="btn btn-primary btn-sm" onclick="addSetting('categories')">+ Ajouter</button>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-outline btn-sm" onclick="replaceCategoriesWithReference()">🔄 Remplacer par les catégories du fichier</button>
+                <button class="btn btn-primary btn-sm" onclick="addSetting('categories')">+ Ajouter</button>
+              </div>
             </div>
             <div class="admin-section-body" id="settings-categories"></div>
           </div>
@@ -3434,10 +3437,37 @@ function populateCategorieFilter() {
 const CATEGORY_ICONS = {
   'Moteur': '⚙️',
   'Freinage': '🛑',
+  'Freins': '🛑',
   'Électrique': '⚡',
+  'Electronique embarquée': '💻',
   'Suspension': '🔩',
   'Carrosserie': '🚌',
+  'Vitres + carrosserie': '🪟',
   'Pneumatique': '🛞',
+  "AD-BLUE": '🧪',
+  "Admission d'air suralimentation": '🌀',
+  'Articulation': '🔗',
+  'Cabine OMC': '🚕',
+  'Capteurs (Mot St)': '📡',
+  'Carburant': '⛽',
+  'Chauffage-ventilation': '🌡️',
+  'Cloison de séparation-paravent': '🚧',
+  'Direction': '🎯',
+  'Entrainement par courroie': '➰',
+  'Essieu avant': '🔧',
+  'Essuyage - Lavage': '🌧️',
+  "Huiles&graisses": '🛢️',
+  'PMR': '♿',
+  'Planche de bord-cache-habillage': '🎛️',
+  'Pont': '🌉',
+  'Porte': '🚪',
+  'Radiateur Moteur': '❄️',
+  "Recyclage des gaz d'échappement": '♻️',
+  'Reservoir LDR': '🛢️',
+  'Siège passager': '💺',
+  "Système d'air comprimé": '💨',
+  'Système incendie': '🧯',
+  'Tableau de bord': '🎛️',
 };
 function categoryIcon(name) {
   return CATEGORY_ICONS[name] || '📦';
@@ -6078,6 +6108,43 @@ function renderSettings() {
   renderSettingList('marques', v => `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--amber-light);color:var(--amber-dark);border:1px solid var(--amber);border-radius:20px;font-size:13px;font-weight:600">🚌 ${v}</span>`);
   if(!DB.settings.busParc) DB.settings.busParc = [];
   renderSettingList('busParc', v => `<span style="font-size:13px"><strong style="font-family:var(--font-mono)">#${v.numero}</strong> <span class="text-muted">— ${v.marque||'—'} ${v.type==='articule'?'(articulé)':v.type==='standard'?'(standard)':''}</span></span>`);
+}
+
+// Liste exacte des organes du fichier de référence du collègue (fichier
+// "New fichiers piecesD3.xlsx", 07/08/2026) — permet d'aligner en un clic la
+// liste des catégories BusPartsManager sur celle du fichier, plutôt que de
+// les retaper une par une. Les anciennes catégories de Hassan ne
+// correspondaient pas exactement (ex: "Freinage" au lieu de "Freins"), ce
+// qui empêchait les tuiles de retrouver les pièces déjà corrigées.
+const REFERENCE_CATEGORIES = [
+  "AD-BLUE", "Admission d'air suralimentation", "Articulation", "Cabine OMC",
+  "Capteurs (Mot St)", "Carburant", "Chauffage-ventilation",
+  "Cloison de séparation-paravent", "Direction", "Echappement",
+  "Electronique embarquée", "Entrainement par courroie", "Essieu avant",
+  "Essuyage - Lavage", "Freins", "Huiles&graisses", "Moteur", "PMR",
+  "Planche de bord-cache-habillage", "Pont", "Porte", "Radiateur Moteur",
+  "Recyclage des gaz d'échappement", "Reservoir LDR", "Siège passager",
+  "Suspension", "Système d'air comprimé", "Système incendie",
+  "Tableau de bord", "Vitres + carrosserie"
+];
+
+function replaceCategoriesWithReference() {
+  const anciennes = DB.settings.categories || [];
+  const aSupprimer = anciennes.filter(c => !REFERENCE_CATEGORIES.includes(c));
+  const aAjouter = REFERENCE_CATEGORIES.filter(c => !anciennes.includes(c));
+  if(!confirm(
+    `Remplacer la liste de catégories par celle du fichier de référence ?\n\n` +
+    `${aAjouter.length} catégorie(s) seront ajoutée(s).\n` +
+    `${aSupprimer.length} catégorie(s) actuelle(s) qui ne correspondent pas seront retirées de la liste : ${aSupprimer.join(', ') || '(aucune)'}\n\n` +
+    `⚠️ Les pièces qui utilisaient une catégorie retirée GARDENT cette valeur (rien n'est effacé sur les pièces elles-mêmes) — elles n'apparaîtront simplement plus sous aucune tuile tant que tu ne leur donnes pas une catégorie de la nouvelle liste.\n\n` +
+    `Continuer ?`
+  )) return;
+
+  DB.settings.categories = [...REFERENCE_CATEGORIES];
+  save();
+  populateCategorieFilter();
+  renderSettingList('categories', v => v);
+  showNotif('📂', 'Catégories remplacées', `${REFERENCE_CATEGORIES.length} catégorie(s) alignée(s) sur le fichier de référence`);
 }
 
 function renderSettingList(type, renderFn) {
