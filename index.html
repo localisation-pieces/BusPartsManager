@@ -2462,6 +2462,7 @@ window.applyRemoteData = function(data) {
     if(data.activity) DB.activity = data.activity;
     if(data.stockMovements) DB.stockMovements = data.stockMovements;
     if(data.carts) DB.carts = data.carts;
+    if(data.schemas) DB.schemas = data.schemas;
     if(data.settings) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
