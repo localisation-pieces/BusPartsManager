@@ -1237,7 +1237,7 @@
 </div>
 
 <!-- ARTICLE DETAIL MODAL -->
-<div class="modal-overlay" id="modal-article-detail">
+<div class="modal-overlay" id="modal-article-detail" style="z-index:1010">
   <div class="modal" style="width:680px">
     <div class="modal-header" style="align-items:flex-start">
       <div>
@@ -1603,7 +1603,7 @@
 
 <!-- PHOTO ZOOM MODAL — simple viewer, devient un mini-carrousel (flèches + points)
      dès qu'une pièce a plus d'une image (photo + éventuelle image d'emplacement) -->
-<div class="modal-overlay" id="modal-photo-zoom" style="background:rgba(0,0,0,0.85)">
+<div class="modal-overlay" id="modal-photo-zoom" style="background:rgba(0,0,0,0.85);z-index:1020">
   <img id="photo-zoom-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,0.5)" onclick="event.stopPropagation()">
   <button id="zoom-prev-btn" onclick="event.stopPropagation();zoomPhotoNav(-1)" style="display:none;position:absolute;left:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">‹</button>
   <button id="zoom-next-btn" onclick="event.stopPropagation();zoomPhotoNav(1)" style="display:none;position:absolute;right:16px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.15);border:none;color:white;font-size:26px;width:48px;height:48px;border-radius:50%;cursor:pointer;align-items:center;justify-content:center">›</button>
@@ -3563,7 +3563,10 @@ function renderHotspotsOverlay(wrapId, hotspots, mode) {
       el.className = 'schema-hotspot';
       el.style.cssText = style;
       el.innerHTML = `<span class="schema-hotspot-label">${escapeHtml(a ? a.desc : (h.label||'Pièce introuvable'))}</span>`;
-      el.onclick = () => { if(a) { closeModal('modal-schema-viewer'); openArticleDetail(a.id); } };
+      // On ne ferme PAS la visionneuse de schéma : la fiche s'ouvre par-dessus,
+      // et fermer la fiche ramène directement au schéma, prêt pour cliquer
+      // sur la pièce suivante — sans devoir tout renaviguer depuis le début.
+      el.onclick = () => { if(a) openArticleDetail(a.id); };
     }
     wrap.appendChild(el);
   });
@@ -5498,8 +5501,10 @@ function updateBadges() {
   if(db) { db.textContent = preparedOrders; db.style.display = preparedOrders > 0 ? '' : 'none'; }
   if(nb) { nb.textContent = unreadNotifs; nb.style.display = unreadNotifs > 0 ? '' : 'none'; }
 
-  const cb = document.getElementById('catalog-count-badge');
-  if(cb) { cb.textContent = DB.articles.length; cb.style.display = DB.articles.length ? '' : 'none'; }
+  // NB : catalog-count-badge n'est PAS mis à jour ici — filterArticles() s'en
+  // charge, car lui seul connaît le nombre réel après filtrage (ex: "Avec
+  // photo"). L'écraser ici avec le total brut du catalogue effaçait à tort
+  // le chiffre filtré dès qu'un rafraîchissement général se déclenchait.
 
   // Bottom nav badges
   const myPendingCount = DB.orders.filter(o => o.agentId === currentUser?.id && (o.status === 'pending' || o.status === 'taken')).length;
