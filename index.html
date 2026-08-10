@@ -178,11 +178,11 @@
   @media (max-width: 640px) { .category-tile { width: 66px; padding: 6px 4px 5px; } .category-tile .cat-icon { font-size: 16px; } .category-tile .cat-label { font-size: 9px; } }
   .schema-img-wrap { position: relative; display: block; max-width: 100%; width: fit-content; margin: 0 auto; user-select: none; touch-action: none; }
   .schema-img-wrap img { display: block; max-width: 100%; max-height: 62vh; width: auto; height: auto; border-radius: 8px; margin: 0 auto; }
-  .schema-hotspot { position: absolute; border: 2px solid var(--primary); background: rgba(59,130,246,0.18); border-radius: 4px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+  .schema-hotspot { position: absolute; border: 2px solid var(--primary); background: rgba(59,130,246,0.18); border-radius: 50%; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
   .schema-hotspot:hover { background: rgba(59,130,246,0.38); border-color: var(--primary-dark, var(--primary)); }
   .schema-hotspot-label { position: absolute; bottom: 100%; left: 0; background: var(--navy); color: white; font-size: 10.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.1s; margin-bottom: 3px; }
   .schema-hotspot:hover .schema-hotspot-label { opacity: 1; }
-  .schema-hotspot-editor { position: absolute; border: 2px dashed var(--danger); background: rgba(239,68,68,0.18); border-radius: 4px; cursor: pointer; }
+  .schema-hotspot-editor { position: absolute; border: 2px dashed var(--danger); background: rgba(239,68,68,0.18); border-radius: 50%; cursor: pointer; }
   .schema-hotspot-editor .hs-del { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; background: var(--danger); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; }
   .schema-thumb-card { border: 1.5px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; background: var(--surface); transition: box-shadow .15s, transform .15s; }
   .schema-thumb-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
@@ -999,6 +999,7 @@
               Vue d'ensemble de tous les schémas, tous organes confondus. Pour en ajouter un nouveau, le plus simple reste de passer par le catalogue : sélectionne l'organe concerné (tuile en haut du catalogue), puis "📐 Ajouter un schéma".
             </p>
             <div id="admin-schema-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px"></div>
+            <button class="btn btn-outline" style="margin-top:14px" onclick="fixExistingHotspotsToCircles()">⚪ Convertir les zones existantes en cercles</button>
           </div>
         </div>
 
@@ -4309,7 +4310,6 @@ let schemaEditingId = null;
 let schemaPendingImageBlob = null;
 let schemaCurrentImageUrl = '';
 let schemaHotspots = [];
-let schemaDrawStart = null; // {xPct, yPct} pendant un cliqué-glissé en cours
 
 function openSchemaEditor(schemaId, defaultCategorie) {
   schemaEditingId = schemaId;
@@ -4371,56 +4371,86 @@ async function previewSchemaImage(input) {
   const wrap = document.getElementById('schema-editor-imgwrap');
   if(!wrap) return;
 
-  function pctFromEvent(e) {
+  // Taille du cercle : un pourcentage fixe de la plus petite dimension
+  // affichée de l'image, converti séparément en % largeur et % hauteur pour
+  // que ça reste un CERCLE parfait (et pas une ellipse) quel que soit le
+  // format de l'image — un même pourcentage de largeur et de hauteur ne
+  // donne un cercle que si l'image est carrée, sinon il faut compenser.
+  const HOTSPOT_RADIUS_RATIO = 0.035; // 3.5% de la plus petite dimension affichée
+
+  function placeHotspotAt(clientX, clientY) {
     const img = document.getElementById('schema-editor-img');
     const rect = img.getBoundingClientRect();
-    const x = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
-    const y = Math.min(100, Math.max(0, ((e.clientY - rect.top) / rect.height) * 100));
-    return { x, y };
+    const radiusPx = Math.min(rect.width, rect.height) * HOTSPOT_RADIUS_RATIO;
+    const wPct = (radiusPx * 2 / rect.width) * 100;
+    const hPct = (radiusPx * 2 / rect.height) * 100;
+    const cxPct = ((clientX - rect.left) / rect.width) * 100;
+    const cyPct = ((clientY - rect.top) / rect.height) * 100;
+    const x = Math.min(100 - wPct, Math.max(0, cxPct - wPct / 2));
+    const y = Math.min(100 - hPct, Math.max(0, cyPct - hPct / 2));
+    schemaHotspots.push({ x, y, w: wPct, h: hPct, articleId: null, label: '' });
+    openHotspotPicker(schemaHotspots.length - 1);
   }
 
+  // Un simple clic (pas de cliqué-glissé à gérer) place directement un
+  // cercle de taille fixe, centré à l'endroit touché — plus besoin de
+  // dessiner/ajuster une forme, ce qui donnait des zones de tailles très
+  // différentes selon la précision du geste.
   wrap.addEventListener('pointerdown', (e) => {
     if(e.target.closest('.hs-del')) return; // laisser le bouton supprimer gérer son propre clic
     if(e.target.id !== 'schema-editor-img' && e.target !== wrap) return;
-    const p = pctFromEvent(e);
-    schemaDrawStart = p;
     e.preventDefault();
-  });
-
-  wrap.addEventListener('pointermove', (e) => {
-    if(!schemaDrawStart) return;
-    const p = pctFromEvent(e);
-    const x = Math.min(schemaDrawStart.x, p.x), y = Math.min(schemaDrawStart.y, p.y);
-    const w = Math.abs(p.x - schemaDrawStart.x), h = Math.abs(p.y - schemaDrawStart.y);
-    let live = document.getElementById('schema-draw-live');
-    if(!live) {
-      live = document.createElement('div');
-      live.id = 'schema-draw-live';
-      live.className = 'schema-hotspot-editor';
-      wrap.appendChild(live);
-    }
-    live.style.cssText = `left:${x}%;top:${y}%;width:${w}%;height:${h}%`;
-  });
-
-  wrap.addEventListener('pointerup', (e) => {
-    if(!schemaDrawStart) return;
-    const p = pctFromEvent(e);
-    const x = Math.min(schemaDrawStart.x, p.x), y = Math.min(schemaDrawStart.y, p.y);
-    const w = Math.abs(p.x - schemaDrawStart.x), h = Math.abs(p.y - schemaDrawStart.y);
-    schemaDrawStart = null;
-    const live = document.getElementById('schema-draw-live');
-    if(live) live.remove();
-    // Zone trop petite = probablement un simple clic accidentel, pas un
-    // vrai cliqué-glissé intentionnel — on l'ignore.
-    if(w < 1.5 || h < 1.5) return;
-    schemaHotspots.push({ x, y, w, h, articleId: null, label: '' });
-    openHotspotPicker(schemaHotspots.length - 1);
+    placeHotspotAt(e.clientX, e.clientY);
   });
 })();
 
 function removeHotspot(index) {
   schemaHotspots.splice(index, 1);
   renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+}
+
+// Migration ponctuelle : convertit toutes les zones déjà créées (sur tous
+// les schémas existants) en cercles de taille uniforme, centrées sur leur
+// position actuelle. Nécessite de charger chaque image pour connaître ses
+// vraies proportions (largeur/hauteur naturelles) — indispensable pour
+// qu'un cercle reste parfaitement rond quel que soit le format de l'image
+// (une même taille en % de largeur et de hauteur ne donne un cercle que sur
+// une image carrée, sinon il faut compenser le ratio).
+async function fixExistingHotspotsToCircles() {
+  const totalHotspots = (DB.schemas || []).reduce((s, sc) => s + (sc.hotspots || []).length, 0);
+  if(!totalHotspots) { alert('Aucune zone existante à convertir.'); return; }
+  if(!confirm(`Convertir les ${totalHotspots} zone(s) existante(s) (tous schémas confondus) en cercles de taille uniforme, centrées sur leur position actuelle ?\n\nCette action ne peut pas être annulée depuis l'application.`)) return;
+
+  const HOTSPOT_RADIUS_RATIO = 0.035;
+  let fixed = 0, failed = 0;
+
+  for(const schema of (DB.schemas || [])) {
+    if(!schema.hotspots || !schema.hotspots.length) continue;
+    const dims = await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = () => resolve(null);
+      img.src = cloudinaryOptimized(schema.image, 'w_1400');
+    });
+    if(!dims || !dims.w || !dims.h) { failed += schema.hotspots.length; continue; }
+
+    const radiusPx = Math.min(dims.w, dims.h) * HOTSPOT_RADIUS_RATIO;
+    const wPct = (radiusPx * 2 / dims.w) * 100;
+    const hPct = (radiusPx * 2 / dims.h) * 100;
+
+    schema.hotspots.forEach(h => {
+      const cxPct = h.x + h.w / 2;
+      const cyPct = h.y + h.h / 2;
+      h.x = Math.min(100 - wPct, Math.max(0, cxPct - wPct / 2));
+      h.y = Math.min(100 - hPct, Math.max(0, cyPct - hPct / 2));
+      h.w = wPct;
+      h.h = hPct;
+      fixed++;
+    });
+  }
+
+  save();
+  showNotif('⚪', 'Zones converties', `${fixed} zone(s) transformée(s) en cercle(s)${failed ? `, ${failed} échec(s) (image inaccessible)` : ''}`);
 }
 
 // --- Mini-picker pour choisir la pièce reliée à la zone qu'on vient de dessiner ---
