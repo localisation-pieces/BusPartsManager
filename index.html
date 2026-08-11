@@ -1004,6 +1004,17 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">📍 Renseigner les emplacements manquants</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Emplacement</strong> — pour renseigner le champ emplacement des pièces qui n'en ont <u>actuellement aucun</u>. Une pièce qui a déjà un emplacement renseigné n'est jamais modifiée, précis ou non.
+            </p>
+            <input type="file" id="emplacement-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startEmplacementFixImport(this.files[0])">
+            <button class="btn btn-outline" onclick="document.getElementById('emplacement-fix-input').click()">📍 Importer le fichier d'emplacements</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">📐 Schémas de localisation par organe</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
@@ -6282,6 +6293,96 @@ function processQtyInterventionFix(csvText) {
   text.textContent = `Terminé : ${updated} quantité(s) renseignée(s), ${alreadyFilled} déjà renseignée(s) (non touchée(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
   addLog('—————————————————', 'var(--text3)');
   addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseignée(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
+
+  if(updated > 0) {
+    save();
+    filterArticles();
+  }
+  closeBtn.disabled = false;
+}
+
+// Import de correction d'emplacement : ne REMPLIT que les emplacements
+// actuellement VIDES — ne remplace jamais une valeur déjà renseignée,
+// précise ou non, pour ne jamais faire régresser une info existante avec
+// quelque chose de plus générique (ex: un code de casier précis écrasé par
+// "VANAS").
+function startEmplacementFixImport(file) {
+  if(!file) return;
+  document.getElementById('emplacement-fix-input').value = '';
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let csv;
+      if(ext === 'csv') {
+        csv = e.target.result;
+      } else {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        csv = XLSX.utils.sheet_to_csv(ws, {skipHidden:true});
+      }
+      processEmplacementFix(csv);
+    } catch(err) {
+      alert('Erreur de lecture du fichier : ' + err.message);
+    }
+  };
+  if(ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function processEmplacementFix(csvText) {
+  const log = document.getElementById('category-fix-log');
+  const text = document.getElementById('category-fix-progress-text');
+  const closeBtn = document.getElementById('category-fix-close-btn');
+  log.innerHTML = '';
+  closeBtn.disabled = true;
+  openModal('modal-category-fix');
+
+  function addLog(line, color) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(color) div.style.color = color;
+    log.appendChild(div);
+  }
+
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+  if(lines.length < 2) {
+    text.textContent = 'Fichier vide ou illisible.';
+    closeBtn.disabled = false;
+    return;
+  }
+
+  const headers = parseCSVRow(lines[0]).map(h => h.trim().toLowerCase());
+  const sapIdx = headers.findIndex(h => h.includes('sap'));
+  const empIdx = headers.findIndex(h => h.includes('emplacement'));
+  if(sapIdx === -1 || empIdx === -1) {
+    text.textContent = '';
+    addLog('❌ Colonnes "SAP" et/ou "Emplacement" introuvables dans l\'en-tête du fichier.', 'var(--danger)');
+    closeBtn.disabled = false;
+    return;
+  }
+
+  let updated = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
+
+  for(let i = 1; i < lines.length; i++) {
+    const cols = parseCSVRow(lines[i]);
+    const sapRaw = (cols[sapIdx] || '').trim();
+    const empRaw = (cols[empIdx] || '').trim();
+    if(!sapRaw || !empRaw) { emptyRows++; continue; }
+    const sap = sapRaw.replace(/[^0-9]/g, '').slice(0, 8);
+    const article = DB.articles.find(a => a.sap === sap);
+    if(!article) { notFoundInCatalogue++; continue; }
+    if(article.emplacement && article.emplacement.trim()) { alreadyFilled++; continue; }
+    addLog(`✅ SAP ${sap} — emplacement renseigné : "${empRaw}"`, 'var(--primary)');
+    article.emplacement = empRaw;
+    updated++;
+  }
+
+  text.textContent = `Terminé : ${updated} emplacement(s) renseigné(s), ${alreadyFilled} déjà renseigné(s) (non touché(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
+  addLog('—————————————————', 'var(--text3)');
+  addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseigné(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
     save();
