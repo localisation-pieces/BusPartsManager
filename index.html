@@ -4646,6 +4646,22 @@ function filterHotspotArticleOptions() {
 function chooseHotspotArticle(articleId) {
   if(pendingHotspotIndex === null) return;
   const a = DB.articles.find(x => x.id === articleId);
+  const schemaCategorie = document.getElementById('schema-categorie').value;
+
+  // Contrôle de cohérence : la pièce choisie appartient-elle bien à l'organe
+  // de ce schéma ? Si non, on propose de corriger sa catégorie plutôt que de
+  // laisser une incohérence passer inaperçue (ex: relier une pièce classée
+  // "Direction" sur un schéma "Freins").
+  if(a && schemaCategorie && a.categorie !== schemaCategorie) {
+    const corriger = confirm(
+      `⚠️ Cette pièce est actuellement classée dans "${a.categorie || '(aucune catégorie)'}", mais ce schéma appartient à l'organe "${schemaCategorie}".\n\n` +
+      `Voulez-vous corriger la catégorie de cette pièce pour qu'elle corresponde à "${schemaCategorie}" ?\n\n` +
+      `OK = corriger la catégorie de la pièce\n` +
+      `Annuler = laisser la pièce telle quelle (la zone sera quand même reliée)`
+    );
+    if(corriger) a.categorie = schemaCategorie;
+  }
+
   schemaHotspots[pendingHotspotIndex].articleId = articleId;
   schemaHotspots[pendingHotspotIndex].label = a ? a.desc : '';
   pendingHotspotIndex = null;
