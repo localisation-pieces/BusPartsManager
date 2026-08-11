@@ -1004,6 +1004,17 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">🏭 Renseigner les références fournisseurs manquantes</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Référence fournisseur</strong> — pour renseigner le champ des pièces qui n'en ont <u>actuellement aucune</u>. Une pièce qui a déjà une référence n'est jamais modifiée.
+            </p>
+            <input type="file" id="fournisseurref-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startFournisseurRefFixImport(this.files[0])">
+            <button class="btn btn-outline" onclick="document.getElementById('fournisseurref-fix-input').click()">🏭 Importer le fichier de références</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">📍 Renseigner les emplacements manquants</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
@@ -6383,6 +6394,95 @@ function processEmplacementFix(csvText) {
   text.textContent = `Terminé : ${updated} emplacement(s) renseigné(s), ${alreadyFilled} déjà renseigné(s) (non touché(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
   addLog('—————————————————', 'var(--text3)');
   addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseigné(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
+
+  if(updated > 0) {
+    save();
+    filterArticles();
+  }
+  closeBtn.disabled = false;
+}
+
+// Import de correction de référence fournisseur : ne REMPLIT que si le champ
+// est actuellement vide — ne remplace jamais une référence déjà saisie
+// (certaines pièces ont deux systèmes de référencement légitimement
+// différents, ex: code interne STIB vs référence constructeur Mercedes).
+function startFournisseurRefFixImport(file) {
+  if(!file) return;
+  document.getElementById('fournisseurref-fix-input').value = '';
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let csv;
+      if(ext === 'csv') {
+        csv = e.target.result;
+      } else {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        csv = XLSX.utils.sheet_to_csv(ws, {skipHidden:true});
+      }
+      processFournisseurRefFix(csv);
+    } catch(err) {
+      alert('Erreur de lecture du fichier : ' + err.message);
+    }
+  };
+  if(ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function processFournisseurRefFix(csvText) {
+  const log = document.getElementById('category-fix-log');
+  const text = document.getElementById('category-fix-progress-text');
+  const closeBtn = document.getElementById('category-fix-close-btn');
+  log.innerHTML = '';
+  closeBtn.disabled = true;
+  openModal('modal-category-fix');
+
+  function addLog(line, color) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(color) div.style.color = color;
+    log.appendChild(div);
+  }
+
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+  if(lines.length < 2) {
+    text.textContent = 'Fichier vide ou illisible.';
+    closeBtn.disabled = false;
+    return;
+  }
+
+  const headers = parseCSVRow(lines[0]).map(h => h.trim().toLowerCase());
+  const sapIdx = headers.findIndex(h => h.includes('sap'));
+  const refIdx = headers.findIndex(h => h.includes('fourniss'));
+  if(sapIdx === -1 || refIdx === -1) {
+    text.textContent = '';
+    addLog('❌ Colonnes "SAP" et/ou "Référence fournisseur" introuvables dans l\'en-tête du fichier.', 'var(--danger)');
+    closeBtn.disabled = false;
+    return;
+  }
+
+  let updated = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
+
+  for(let i = 1; i < lines.length; i++) {
+    const cols = parseCSVRow(lines[i]);
+    const sapRaw = (cols[sapIdx] || '').trim();
+    const refRaw = (cols[refIdx] || '').trim();
+    if(!sapRaw || !refRaw) { emptyRows++; continue; }
+    const sap = sapRaw.replace(/[^0-9]/g, '').slice(0, 8);
+    const article = DB.articles.find(a => a.sap === sap);
+    if(!article) { notFoundInCatalogue++; continue; }
+    if(article.fournisseurRef && article.fournisseurRef.trim()) { alreadyFilled++; continue; }
+    addLog(`✅ SAP ${sap} — référence renseignée : "${refRaw}"`, 'var(--primary)');
+    article.fournisseurRef = refRaw;
+    updated++;
+  }
+
+  text.textContent = `Terminé : ${updated} référence(s) renseignée(s), ${alreadyFilled} déjà renseignée(s) (non touchée(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
+  addLog('—————————————————', 'var(--text3)');
+  addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseignée(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
     save();
