@@ -4920,20 +4920,35 @@ function renderCartView() {
   }
 
   const totalItems = cart.reduce((s,c) => s+c.qty, 0);
-  const selectedBusNumero = document.getElementById('cart-bus-numero') ? document.getElementById('cart-bus-numero').value : '';
-  const selectedBus = (DB.settings.busParc||[]).find(b => b.numero === selectedBusNumero);
-  body.innerHTML = `
-    <div style="max-width:700px;margin:0 auto">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div style="font-size:14px;color:var(--text2)">${totalItems} article(s) · ${cart.length} référence(s)</div>
-        <button class="btn btn-outline btn-sm" onclick="clearCart()" style="color:var(--danger);border-color:var(--danger)">🗑️ Vider le panier</button>
-      </div>
+  const busParc = DB.settings.busParc || [];
+  const busOptionsHtml = (selected) => `<option value="">— Non assigné —</option>` +
+    busParc.map(b => `<option value="${b.numero}" ${b.numero===selected?'selected':''}>#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})</option>`).join('');
 
+  // Regroupe les articles par bus assigné — un agent qui travaille sur
+  // plusieurs bus en même temps voit ainsi clairement quelle pièce va où,
+  // au lieu d'un panier mélangé où le magasinier ne peut pas faire la
+  // différence à la réception d'une seule commande.
+  const groups = {};
+  cart.forEach((c, i) => {
+    const key = c.bus || '';
+    if(!groups[key]) groups[key] = [];
+    groups[key].push({ ...c, _idx: i });
+  });
+  const groupKeys = Object.keys(groups).sort((a,b) => a === '' ? 1 : b === '' ? -1 : 0);
+
+  function renderGroup(busNumero, items) {
+    const busInfo = busParc.find(b => b.numero === busNumero);
+    const groupHeader = busNumero
+      ? `<div style="display:flex;align-items:center;gap:8px;padding:10px 20px;background:var(--surface2);font-weight:700;font-size:13px;border-bottom:1px solid var(--border)">🚌 Bus #${escapeHtml(busNumero)}${busInfo ? ` — ${escapeHtml(busInfo.marque)} (${busInfo.type==='articule'?'Articulé':'Standard'})` : ''}</div>`
+      : `<div style="display:flex;align-items:center;gap:8px;padding:10px 20px;background:var(--danger-light);font-weight:700;font-size:13px;color:var(--danger);border-bottom:1px solid var(--border)">⚠️ Bus non assigné — obligatoire avant l'envoi</div>`;
+
+    return `
       <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
-        ${cart.map((c,i) => {
+        ${groupHeader}
+        ${items.map((c,i) => {
           const a = DB.articles.find(x => x.id === c.id);
           if(!a) return '';
-          const incompatible = selectedBus ? !isArticleCompatibleWithBusType(a, selectedBus.type) : false;
+          const incompatible = busInfo ? !isArticleCompatibleWithBusType(a, busInfo.type) : false;
           return `
           <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;${i>0?'border-top:1px solid var(--border)':''}${incompatible?';background:var(--danger-light)':''}">
             <div style="width:64px;height:64px;border-radius:10px;background:var(--surface2);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid var(--border)" ${a.photo?`onclick="openPhotoZoom('${a.photo}', event)" style="cursor:zoom-in"`:''}>
@@ -4942,13 +4957,10 @@ function renderCartView() {
             <div style="flex:1;min-width:0">
               <div style="font-size:14px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}${c.fromKit?`<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--navy);color:white;margin-left:6px;vertical-align:middle">📦 ${escapeHtml(c.kitNom||'Kit')}</span>`:''}</div>
               <div style="font-size:12px;color:var(--text3);margin-bottom:6px">SAP: ${escapeHtml(a.sap)} · ${escapeHtml(a.fournisseur)||'—'} · 📍 ${escapeHtml(a.magasin)} ${escapeHtml(a.emplacement)}</div>
-              <div style="display:flex;gap:4px;flex-wrap:wrap">
-                ${a.busStandard?'<span class="badge badge-blue" style="font-size:10px">Standard</span>':''}
-                ${a.busArticule?'<span class="badge badge-teal" style="font-size:10px">Articulé</span>':''}
-                ${a.serialise?'<span class="badge badge-amber" style="font-size:10px">Sérialisé</span>':''}
-                ${a.chimique?'<span class="badge badge-gray" style="font-size:10px">Chimique</span>':''}
-              </div>
-              ${incompatible ? `<div style="margin-top:6px;font-size:11.5px;color:var(--danger);font-weight:600">⚠️ Non compatible avec le bus ${selectedBus.type==='articule'?'articulé':'standard'} sélectionné</div>` : ''}
+              <select onchange="cartAssignBus('${c.id}', this.value)" style="font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;max-width:220px">
+                ${busOptionsHtml(c.bus || '')}
+              </select>
+              ${incompatible ? `<div style="margin-top:6px;font-size:11.5px;color:var(--danger);font-weight:600">⚠️ Non compatible avec le bus ${busInfo.type==='articule'?'articulé':'standard'} assigné</div>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
               <div class="qty-control">
@@ -4960,23 +4972,36 @@ function renderCartView() {
             </div>
           </div>`;
         }).join('')}
+      </div>`;
+  }
+
+  body.innerHTML = `
+    <div style="max-width:700px;margin:0 auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div style="font-size:14px;color:var(--text2)">${totalItems} article(s) · ${cart.length} référence(s)${groupKeys.filter(k=>k).length > 1 ? ` · ${groupKeys.filter(k=>k).length} bus différents` : ''}</div>
+        <button class="btn btn-outline btn-sm" onclick="clearCart()" style="color:var(--danger);border-color:var(--danger)">🗑️ Vider le panier</button>
       </div>
 
-      <div class="card" style="margin-bottom:16px;border:2px solid var(--primary-light)">
-        <div class="section-title" style="margin-bottom:12px">🚌 Numéro de bus *</div>
-        <select id="cart-bus-numero" onchange="validateBusNumeroInput(this)"
-          style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:16px;font-weight:600;color:var(--text);background:var(--surface);outline:none;cursor:pointer">
-          <option value="">— Sélectionner le numéro de bus —</option>
-          ${(DB.settings.busParc||[]).map(b=>`<option value="${b.numero}" ${b.numero===selectedBusNumero?'selected':''}>#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})</option>`).join('')}
-        </select>
-        <div id="bus-numero-info" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
-        <div id="bus-numero-error" style="display:none;margin-top:8px;padding:8px 12px;background:var(--danger-light);border-radius:8px;font-size:12px;color:var(--danger);font-weight:500"></div>
+      <div class="card" style="margin-bottom:20px;border:2px solid var(--primary-light)">
+        <div class="section-title" style="margin-bottom:10px">🚌 Assigner un bus à tout le panier d'un coup</div>
+        <div style="display:flex;gap:8px">
+          <select id="cart-bus-default" style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;font-weight:600;background:var(--surface);cursor:pointer">
+            <option value="">— Sélectionner —</option>
+            ${busParc.map(b=>`<option value="${b.numero}">#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})</option>`).join('')}
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="cartApplyDefaultBus()">Appliquer à tout</button>
+        </div>
+        <p style="font-size:11.5px;color:var(--text3);margin-top:8px">Pratique si tout le panier est pour un seul bus. Si tu travailles sur plusieurs bus en même temps, assigne plutôt chaque article individuellement ci-dessous — l'envoi créera une commande séparée par bus.</p>
       </div>
+
+      ${groupKeys.map(k => renderGroup(k, groups[k])).join('')}
 
       <div class="card" style="margin-bottom:20px">
         <div class="section-title" style="margin-bottom:12px">💬 Commentaire (optionnel)</div>
         <textarea id="cart-comment" rows="3" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;color:var(--text);background:var(--surface);resize:vertical;outline:none;font-family:inherit" placeholder="Urgence, précisions sur l'intervention…" onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'"></textarea>
       </div>
+
+      <div id="cart-send-error" style="display:none;margin-bottom:16px;padding:10px 14px;background:var(--danger-light);border-radius:var(--radius);font-size:12.5px;color:var(--danger);font-weight:500"></div>
 
       <div style="display:flex;gap:12px;justify-content:flex-end">
         <button class="btn btn-outline" onclick="showView('catalog')">← Continuer les achats</button>
@@ -4987,6 +5012,21 @@ function renderCartView() {
     </div>`;
 }
 
+function cartAssignBus(id, busNumero) {
+  const c = cart.find(x => x.id === id);
+  if(c) c.bus = busNumero || null;
+  saveCart();
+  renderCartView();
+}
+
+function cartApplyDefaultBus() {
+  const busNumero = document.getElementById('cart-bus-default').value;
+  if(!busNumero) return;
+  cart.forEach(c => { c.bus = busNumero; });
+  saveCart();
+  renderCartView();
+}
+
 function isArticleCompatibleWithBusType(article, busType) {
   // Une pièce cochée "Standard" et "Articulé" est compatible avec les deux.
   // Une pièce cochée uniquement "Standard" n'est compatible qu'avec un bus standard.
@@ -4995,39 +5035,6 @@ function isArticleCompatibleWithBusType(article, busType) {
   if(busType === 'standard') return !!article.busStandard;
   if(busType === 'articule') return !!article.busArticule;
   return true;
-}
-
-function getIncompatibleCartItems(busType) {
-  if(!busType) return [];
-  return cart
-    .map(c => DB.articles.find(x => x.id === c.id))
-    .filter(a => a && !isArticleCompatibleWithBusType(a, busType));
-}
-
-function validateBusNumeroInput(select) {
-  const val = select.value;
-  const info = document.getElementById('bus-numero-info');
-  const err = document.getElementById('bus-numero-error');
-  const bus = (DB.settings.busParc||[]).find(b => b.numero === val);
-  if(bus) {
-    if(info) {
-      info.innerHTML = `✅ <strong>Bus #${bus.numero}</strong> sélectionné — ${bus.marque} (${bus.type==='articule'?'Articulé':'Standard'})`;
-      info.style.color = 'var(--primary)';
-    }
-    select.style.borderColor = 'var(--primary)';
-    if(err) err.style.display = 'none';
-    // Vérifier compatibilité sans recréer le DOM
-    const incompatibles = getIncompatibleCartItems(bus.type);
-    if(incompatibles.length && err) {
-      err.innerHTML = `⚠️ ${incompatibles.length} pièce(s) incompatibles avec un bus ${bus.type==='articule'?'articulé':'standard'} : ` +
-        incompatibles.map(a => a.desc).join(', ') + `. Retirez-les ou choisissez un autre bus.`;
-      err.style.display = 'block';
-    }
-  } else {
-    if(info) info.textContent = '';
-    if(err) err.style.display = 'none';
-    select.style.borderColor = 'var(--border)';
-  }
 }
 
 function cartChangeQty(id, d) {
@@ -5056,69 +5063,91 @@ function clearCart() {
 
 function sendOrder() {
   if(!cart.length) return;
-  const busInput = document.getElementById('cart-bus-numero');
-  const busNumero = busInput.value;
-  const errEl = document.getElementById('bus-numero-error');
+  const errEl = document.getElementById('cart-send-error');
+  errEl.style.display = 'none';
 
-  if(!busNumero) {
-    errEl.textContent = '⚠️ Veuillez sélectionner le numéro de bus pour envoyer la commande.';
+  // Chaque article doit avoir un bus assigné avant l'envoi — sinon
+  // impossible de savoir pour qui préparer la pièce.
+  const sansBus = cart.filter(c => !c.bus);
+  if(sansBus.length) {
+    const noms = sansBus.map(c => { const a = DB.articles.find(x=>x.id===c.id); return a ? a.desc : c.id; });
+    errEl.innerHTML = `⚠️ ${sansBus.length} article(s) n'ont pas de bus assigné : ${noms.join(', ')}. Assigne un bus à chacun (ou utilise "Appliquer à tout") avant d'envoyer.`;
     errEl.style.display = 'block';
-    busInput.focus();
-    busInput.scrollIntoView({behavior:'smooth', block:'center'});
+    errEl.scrollIntoView({behavior:'smooth', block:'center'});
     return;
   }
 
-  const busInfo = (DB.settings.busParc||[]).find(b => b.numero === busNumero);
+  const busParc = DB.settings.busParc || [];
+  const groups = {};
+  cart.forEach(c => { (groups[c.bus] = groups[c.bus] || []).push(c); });
+  const busNumeros = Object.keys(groups);
 
-  if(busInfo) {
-    const incompatibles = getIncompatibleCartItems(busInfo.type);
+  // Vérifier la compatibilité AVANT de créer quoi que ce soit — pour ne pas
+  // envoyer 2 commandes sur 3 puis planter sur la dernière.
+  for(const busNumero of busNumeros) {
+    const busInfo = busParc.find(b => b.numero === busNumero);
+    if(!busInfo) continue;
+    const incompatibles = groups[busNumero]
+      .map(c => DB.articles.find(x => x.id === c.id))
+      .filter(a => a && !isArticleCompatibleWithBusType(a, busInfo.type));
     if(incompatibles.length) {
-      errEl.innerHTML = `⚠️ Impossible d'envoyer la commande : ${incompatibles.length} pièce(s) ne sont pas compatibles avec un bus ${busInfo.type==='articule'?'articulé':'standard'} (#${busNumero}) : ` +
-        incompatibles.map(a => a.desc).join(', ') +
-        `. Retirez ces pièces du panier ou changez le numéro de bus.`;
+      errEl.innerHTML = `⚠️ Impossible d'envoyer : ${incompatibles.length} pièce(s) ne sont pas compatibles avec le bus ${busInfo.type==='articule'?'articulé':'standard'} #${busNumero} : ` +
+        incompatibles.map(a => a.desc).join(', ') + `. Retire ces pièces ou change leur bus assigné.`;
       errEl.style.display = 'block';
-      busInput.scrollIntoView({behavior:'smooth', block:'center'});
+      errEl.scrollIntoView({behavior:'smooth', block:'center'});
       return;
     }
   }
 
   const comment = document.getElementById('cart-comment') ? sanitizeInput(document.getElementById('cart-comment').value) : '';
+  const createdOrders = [];
 
-  // Détecter si tous les articles viennent du même kit
-  const kitIds = [...new Set(cart.filter(c=>c.fromKit).map(c=>c.fromKit))];
-  const isKitOrder = kitIds.length === 1 && cart.every(c=>c.fromKit === kitIds[0]);
-  const kitId = isKitOrder ? kitIds[0] : null;
-  const kitNom = isKitOrder ? (cart.find(c=>c.fromKit)?.kitNom || '') : '';
+  busNumeros.forEach(busNumero => {
+    const items = groups[busNumero];
+    const busInfo = busParc.find(b => b.numero === busNumero);
 
-  const order = {
-    id: 'ord' + Date.now(),
-    agentId: currentUser.id,
-    agentName: currentUser.name,
-    matricule: currentUser.matricule,
-    items: cart.map(c => ({ articleId: c.id, qty: c.qty, fromKit: c.fromKit||null })),
-    kitId,
-    kitNom,
-    busNumero,
-    busMarque: busInfo ? busInfo.marque : '',
-    busType: busInfo ? busInfo.type : '',
-    comment,
-    status: 'pending',
-    createdAt: Date.now(),
-    takenBy: null, takenByName: null, takenAt: null,
-    preparedAt: null, preparedBy: null, blNumero: null,
-    deliveredAt: null, otNumber: null
-  };
-  DB.orders.push(order);
+    const kitIds = [...new Set(items.filter(c=>c.fromKit).map(c=>c.fromKit))];
+    const isKitOrder = kitIds.length === 1 && items.every(c=>c.fromKit === kitIds[0]);
+    const kitId = isKitOrder ? kitIds[0] : null;
+    const kitNom = isKitOrder ? (items.find(c=>c.fromKit)?.kitNom || '') : '';
 
-  const kitLabel = kitNom ? ` — Kit : ${kitNom}` : '';
-  addActivity('📦', `Nouvelle commande de ${currentUser.name} pour le bus #${busNumero}${kitLabel} (${cart.reduce((s,c)=>s+c.qty,0)} article(s))`);
-  addNotification('magasinier', `📦 Nouvelle commande${kitNom?' — Kit':''} `, `${currentUser.name} (#${currentUser.matricule}) — Bus #${busNumero}${kitLabel} — ${cart.reduce((s,c)=>s+c.qty,0)} article(s)`);
+    const order = {
+      id: 'ord' + Date.now() + Math.random().toString(36).slice(2,5),
+      agentId: currentUser.id,
+      agentName: currentUser.name,
+      matricule: currentUser.matricule,
+      items: items.map(c => ({ articleId: c.id, qty: c.qty, fromKit: c.fromKit||null })),
+      kitId, kitNom,
+      busNumero,
+      busMarque: busInfo ? busInfo.marque : '',
+      busType: busInfo ? busInfo.type : '',
+      comment,
+      status: 'pending',
+      createdAt: Date.now(),
+      takenBy: null, takenByName: null, takenAt: null,
+      preparedAt: null, preparedBy: null, blNumero: null,
+      deliveredAt: null, otNumber: null
+    };
+    DB.orders.push(order);
+    createdOrders.push(order);
+
+    const kitLabel = kitNom ? ` — Kit : ${kitNom}` : '';
+    const qtyTotal = items.reduce((s,c)=>s+c.qty,0);
+    addActivity('📦', `Nouvelle commande de ${currentUser.name} pour le bus #${busNumero}${kitLabel} (${qtyTotal} article(s))`);
+    addNotification('magasinier', `📦 Nouvelle commande${kitNom?' — Kit':''} `, `${currentUser.name} (#${currentUser.matricule}) — Bus #${busNumero}${kitLabel} — ${qtyTotal} article(s)`);
+  });
+
   cart = [];
   updateCartBadge();
-  saveCart(); // Vider le panier sauvegardé après envoi
+  saveCart();
   save();
   updateBadges();
-  showNotif('✅', 'Demande envoyée !', `Bus #${busNumero} — le magasinier va traiter votre commande`);
+
+  if(createdOrders.length > 1) {
+    showNotif('✅', `${createdOrders.length} demandes envoyées !`, `Une commande séparée par bus : ${busNumeros.map(b=>'#'+b).join(', ')}`);
+  } else {
+    showNotif('✅', 'Demande envoyée !', `Bus #${busNumeros[0]} — le magasinier va traiter votre commande`);
+  }
   showView('myorders');
 }
 
