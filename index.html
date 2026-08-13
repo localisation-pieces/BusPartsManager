@@ -1004,6 +1004,17 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">✏️ Corriger les désignations en masse</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Désignation</strong> — pour remplacer la désignation des pièces correspondantes, <u>même si elle est déjà renseignée</u>. Les SAP absents du fichier, ou absents du catalogue, restent inchangés.
+            </p>
+            <input type="file" id="designation-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startDesignationFixImport(this.files[0])">
+            <button class="btn btn-outline" onclick="document.getElementById('designation-fix-input').click()">✏️ Importer le fichier de désignations</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">🏭 Renseigner les références fournisseurs manquantes</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
@@ -6528,6 +6539,95 @@ function processFournisseurRefFix(csvText) {
   text.textContent = `Terminé : ${updated} référence(s) renseignée(s), ${alreadyFilled} déjà renseignée(s) (non touchée(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
   addLog('—————————————————', 'var(--text3)');
   addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseignée(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
+
+  if(updated > 0) {
+    save();
+    filterArticles();
+  }
+  closeBtn.disabled = false;
+}
+
+// Import de correction de désignation : contrairement aux autres corrections
+// (fournisseur, emplacement, quantité), celui-ci REMPLACE la désignation
+// même si elle est déjà renseignée — c'est le but même de l'outil ("corriger"
+// une désignation existante mais imprécise/fausse), pas de la compléter.
+function startDesignationFixImport(file) {
+  if(!file) return;
+  document.getElementById('designation-fix-input').value = '';
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let csv;
+      if(ext === 'csv') {
+        csv = e.target.result;
+      } else {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        csv = XLSX.utils.sheet_to_csv(ws, {skipHidden:true});
+      }
+      processDesignationFix(csv);
+    } catch(err) {
+      alert('Erreur de lecture du fichier : ' + err.message);
+    }
+  };
+  if(ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function processDesignationFix(csvText) {
+  const log = document.getElementById('category-fix-log');
+  const text = document.getElementById('category-fix-progress-text');
+  const closeBtn = document.getElementById('category-fix-close-btn');
+  log.innerHTML = '';
+  closeBtn.disabled = true;
+  openModal('modal-category-fix');
+
+  function addLog(line, color) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(color) div.style.color = color;
+    log.appendChild(div);
+  }
+
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+  if(lines.length < 2) {
+    text.textContent = 'Fichier vide ou illisible.';
+    closeBtn.disabled = false;
+    return;
+  }
+
+  const headers = parseCSVRow(lines[0]).map(h => h.trim().toLowerCase());
+  const sapIdx = headers.findIndex(h => h.includes('sap'));
+  const descIdx = headers.findIndex(h => h.includes('désignation') || h.includes('designation'));
+  if(sapIdx === -1 || descIdx === -1) {
+    text.textContent = '';
+    addLog('❌ Colonnes "SAP" et/ou "Désignation" introuvables dans l\'en-tête du fichier.', 'var(--danger)');
+    closeBtn.disabled = false;
+    return;
+  }
+
+  let updated = 0, notFoundInCatalogue = 0, dejaIdentique = 0, emptyRows = 0;
+
+  for(let i = 1; i < lines.length; i++) {
+    const cols = parseCSVRow(lines[i]);
+    const sapRaw = (cols[sapIdx] || '').trim();
+    const descRaw = (cols[descIdx] || '').trim();
+    if(!sapRaw || !descRaw) { emptyRows++; continue; }
+    const sap = sapRaw.replace(/[^0-9]/g, '').slice(0, 8);
+    const article = DB.articles.find(a => a.sap === sap);
+    if(!article) { notFoundInCatalogue++; continue; }
+    if(article.desc === descRaw) { dejaIdentique++; continue; }
+    addLog(`✅ SAP ${sap} — "${article.desc}" → "${descRaw}"`, 'var(--primary)');
+    article.desc = descRaw;
+    updated++;
+  }
+
+  text.textContent = `Terminé : ${updated} désignation(s) corrigée(s), ${dejaIdentique} déjà identique(s), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
+  addLog('—————————————————', 'var(--text3)');
+  addLog(`Résumé : ${updated} mise(s) à jour · ${dejaIdentique} déjà identique(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
     save();
