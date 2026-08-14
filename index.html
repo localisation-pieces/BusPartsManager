@@ -1712,7 +1712,8 @@
       <button class="modal-close" onclick="closeModal('modal-schema-viewer')">✕</button>
     </div>
     <div class="modal-body">
-      <p style="font-size:12px;color:var(--text3);margin-bottom:10px">Touchez une zone du schéma pour ouvrir la pièce correspondante.</p>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:4px">Touchez une zone du schéma pour ouvrir la pièce correspondante.</p>
+      <p id="schema-viewer-chemin" style="display:none;font-size:12px;color:var(--text2);margin-bottom:10px">📂 <span></span></p>
       <div class="schema-img-wrap" id="schema-viewer-imgwrap">
         <img id="schema-viewer-img" src="" alt="Schéma">
       </div>
@@ -1741,6 +1742,10 @@
           <label>Organe</label>
           <select id="schema-categorie"></select>
         </div>
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Chemin dans le catalogue <span style="font-size:11px;color:var(--text3);font-weight:400">(optionnel — où retrouver ce schéma dans le catalogue fournisseur, ex: "Frein > Tête de roue > page 12")</span></label>
+        <input type="text" id="schema-chemin-catalogue" placeholder="ex: Frein > Tête de roue > page 12">
       </div>
 
       <div id="schema-upload-zone" class="form-group">
@@ -3692,6 +3697,13 @@ function openSchemaViewer(schemaId) {
   if(!s) return;
   currentSchemaId = schemaId;
   document.getElementById('schema-viewer-title').textContent = `📐 ${s.titre}`;
+  const cheminEl = document.getElementById('schema-viewer-chemin');
+  if(s.cheminCatalogue) {
+    cheminEl.style.display = 'block';
+    cheminEl.querySelector('span').textContent = s.cheminCatalogue;
+  } else {
+    cheminEl.style.display = 'none';
+  }
   const img = document.getElementById('schema-viewer-img');
   img.src = cloudinaryOptimized(s.image, 'w_1400');
   img.onload = () => renderHotspotsOverlay('schema-viewer-imgwrap', s.hotspots, 'view');
@@ -4520,6 +4532,7 @@ function openSchemaEditor(schemaId, defaultCategorie) {
   const s = schemaId ? (DB.schemas || []).find(x => x.id === schemaId) : null;
   document.getElementById('schema-editor-title').textContent = s ? '📐 Modifier le schéma' : '📐 Nouveau schéma';
   document.getElementById('schema-titre').value = s ? s.titre : '';
+  document.getElementById('schema-chemin-catalogue').value = s ? (s.cheminCatalogue || '') : '';
   if(s) catSel.value = s.categorie;
   else if(defaultCategorie) catSel.value = defaultCategorie;
 
@@ -4758,7 +4771,8 @@ async function saveSchema() {
     }
   }
 
-  const data = { titre, categorie, image: imageUrl, hotspots: schemaHotspots.filter(h => h.articleId) };
+  const cheminCatalogue = sanitizeInput(document.getElementById('schema-chemin-catalogue').value);
+  const data = { titre, categorie, image: imageUrl, cheminCatalogue, hotspots: schemaHotspots.filter(h => h.articleId) };
 
   if(schemaEditingId) {
     const idx = DB.schemas.findIndex(s => s.id === schemaEditingId);
