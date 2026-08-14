@@ -4590,7 +4590,7 @@ async function previewSchemaImage(input) {
   // que ça reste un CERCLE parfait (et pas une ellipse) quel que soit le
   // format de l'image — un même pourcentage de largeur et de hauteur ne
   // donne un cercle que si l'image est carrée, sinon il faut compenser.
-  const HOTSPOT_RADIUS_RATIO = 0.018; // 1.8% de la plus petite dimension affichée — réduit pour éviter les chevauchements entre pièces proches
+  const HOTSPOT_RADIUS_RATIO = 0.03; // 3% de la plus petite dimension affichée
 
   function placeHotspotAt(clientX, clientY) {
     const img = document.getElementById('schema-editor-img');
@@ -4635,7 +4635,7 @@ async function fixExistingHotspotsToCircles() {
   if(!totalHotspots) { alert('Aucune zone existante à convertir.'); return; }
   if(!confirm(`Convertir les ${totalHotspots} zone(s) existante(s) (tous schémas confondus) en cercles de taille uniforme, centrées sur leur position actuelle ?\n\nCette action ne peut pas être annulée depuis l'application.`)) return;
 
-  const HOTSPOT_RADIUS_RATIO = 0.018;
+  const HOTSPOT_RADIUS_RATIO = 0.03;
   let fixed = 0, failed = 0;
 
   for(const schema of (DB.schemas || [])) {
