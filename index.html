@@ -1167,7 +1167,11 @@
           <div class="admin-section" style="grid-column:1/-1">
             <div class="admin-section-header">
               🔢 N° de bus
-              <button class="btn btn-primary btn-sm" onclick="addSetting('busParc')">+ Ajouter</button>
+              <div style="display:flex;gap:8px">
+                <input type="file" id="bulk-bus-input" accept=".xlsx,.csv" style="display:none" onchange="startBulkBusImport(this.files[0])">
+                <button class="btn btn-outline btn-sm" onclick="document.getElementById('bulk-bus-input').click()">📥 Importer une liste</button>
+                <button class="btn btn-primary btn-sm" onclick="addSetting('busParc')">+ Ajouter</button>
+              </div>
             </div>
             <div class="admin-section-body" id="settings-busParc"></div>
           </div>
@@ -6607,6 +6611,94 @@ function processFournisseurRefFix(csvText) {
 // (fournisseur, emplacement, quantité), celui-ci REMPLACE la désignation
 // même si elle est déjà renseignée — c'est le but même de l'outil ("corriger"
 // une désignation existante mais imprécise/fausse), pas de la compléter.
+// Import en masse de numéros de bus : accepte un fichier avec les numéros
+// dispersés n'importe où (pas de colonne/en-tête fixe) — on scanne toutes
+// les cellules et on ne garde que celles qui ressemblent à un numéro de bus
+// (3 à 5 chiffres). Le type (standard/articulé) est déduit automatiquement
+// du préfixe : 91xx = articulé, 98xx = standard (règle donnée par Hassan) —
+// tout autre préfixe est signalé pour vérification manuelle plutôt que
+// deviné à l'aveugle. N'ajoute jamais un numéro déjà présent dans le parc.
+function startBulkBusImport(file) {
+  if(!file) return;
+  document.getElementById('bulk-bus-input').value = '';
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let values = [];
+      if(ext === 'csv') {
+        values = e.target.result.split(/\r?\n|,/).map(v => v.trim());
+      } else {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, {header:1});
+        rows.forEach(row => row.forEach(cell => { if(cell !== null && cell !== undefined && cell !== '') values.push(String(cell).trim()); }));
+      }
+      processBulkBusImport(values);
+    } catch(err) {
+      alert('Erreur de lecture du fichier : ' + err.message);
+    }
+  };
+  if(ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function processBulkBusImport(rawValues) {
+  const log = document.getElementById('category-fix-log');
+  const text = document.getElementById('category-fix-progress-text');
+  const closeBtn = document.getElementById('category-fix-close-btn');
+  log.innerHTML = '';
+  closeBtn.disabled = true;
+  openModal('modal-category-fix');
+
+  function addLog(line, color) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(color) div.style.color = color;
+    log.appendChild(div);
+  }
+
+  if(!DB.settings.busParc) DB.settings.busParc = [];
+  const existing = new Set(DB.settings.busParc.map(b => b.numero));
+
+  // Ne garder que les valeurs qui ressemblent à un vrai numéro de bus
+  const candidates = [...new Set(rawValues
+    .map(v => v.replace(/[^0-9]/g, ''))
+    .filter(v => v.length >= 3 && v.length <= 5)
+  )];
+
+  let ajoutes = 0, dejaPresents = 0, prefixeInconnu = 0;
+
+  candidates.forEach(numero => {
+    if(existing.has(numero)) { dejaPresents++; return; }
+    let type = null;
+    if(numero.startsWith('91')) type = 'articule';
+    else if(numero.startsWith('98')) type = 'standard';
+
+    if(!type) {
+      addLog(`⚠️ #${numero} — préfixe non reconnu (ni 91xx ni 98xx), ignoré. Ajoute-le manuellement si besoin.`, 'var(--amber-dark)');
+      prefixeInconnu++;
+      return;
+    }
+    DB.settings.busParc.push({ numero, marque: 'Mercedes-Benz', type });
+    existing.add(numero);
+    addLog(`✅ #${numero} — ${type === 'articule' ? 'Articulé' : 'Standard'}`, 'var(--primary)');
+    ajoutes++;
+  });
+
+  text.textContent = `Terminé : ${ajoutes} bus ajouté(s), ${dejaPresents} déjà présent(s), ${prefixeInconnu} préfixe(s) non reconnu(s).`;
+  addLog('—————————————————', 'var(--text3)');
+  addLog(`Résumé : ${ajoutes} ajouté(s) · ${dejaPresents} déjà présent(s) · ${prefixeInconnu} ignoré(s)`, 'var(--text)');
+
+  if(ajoutes > 0) {
+    save();
+    renderSettingList('busParc', v => `<span style="font-size:13px"><strong style="font-family:var(--font-mono)">#${v.numero}</strong> <span class="text-muted">— ${v.marque||'—'} ${v.type==='articule'?'(articulé)':v.type==='standard'?'(standard)':''}</span></span>`);
+  }
+  closeBtn.disabled = false;
+}
+
 function startDesignationFixImport(file) {
   if(!file) return;
   document.getElementById('designation-fix-input').value = '';
