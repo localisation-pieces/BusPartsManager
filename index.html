@@ -1051,7 +1051,7 @@
               <input type="file" id="bulk-schema-input" accept="image/*" multiple style="display:none" onchange="startBulkSchemaImport(this.files)">
               <button class="btn btn-outline" onclick="document.getElementById('bulk-schema-input').click()">📐 Importer des schémas en masse</button>
             </div>
-            <div id="admin-schema-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+            <div id="admin-schema-list"></div>
             <button class="btn btn-outline" style="margin-top:14px" onclick="fixExistingHotspotsToCircles()">⚪ Convertir les zones existantes en cercles</button>
           </div>
         </div>
@@ -5944,17 +5944,40 @@ const PAGE_LABELS = {
 };
 
 function renderAdminSchemaList() {
-  const grid = document.getElementById('admin-schema-list');
-  if(!grid) return;
+  const container = document.getElementById('admin-schema-list');
+  if(!container) return;
   const schemas = DB.schemas || [];
   if(!schemas.length) {
-    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>Aucun schéma créé pour le moment.</p></div>';
+    container.innerHTML = '<div class="empty-state"><p>Aucun schéma créé pour le moment.</p></div>';
     return;
   }
-  grid.innerHTML = schemas.map(s => `
-    <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')">
-      <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
-      <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${escapeHtml(s.categorie)} · ${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
+
+  // Regroupe par organe, dans l'ordre officiel des catégories (Paramètres)
+  // pour rester cohérent avec l'ordre des tuiles du catalogue — les schémas
+  // dont l'organe ne correspond plus à aucune catégorie existante (ex:
+  // catégorie renommée/supprimée depuis) atterrissent dans un groupe à part
+  // en fin de liste, plutôt que de disparaître silencieusement.
+  const knownCategories = DB.settings.categories || [];
+  const byOrgane = {};
+  schemas.forEach(s => { (byOrgane[s.categorie] = byOrgane[s.categorie] || []).push(s); });
+  const orderedKeys = [
+    ...knownCategories.filter(c => byOrgane[c]),
+    ...Object.keys(byOrgane).filter(c => !knownCategories.includes(c))
+  ];
+
+  container.innerHTML = orderedKeys.map(organe => `
+    <div style="margin-bottom:22px">
+      <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+        ${categoryIcon(organe)} ${escapeHtml(organe)}
+        <span style="font-weight:400;color:var(--text3)">(${byOrgane[organe].length})</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+        ${byOrgane[organe].map(s => `
+          <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')">
+            <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+            <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
+          </div>`).join('')}
+      </div>
     </div>`).join('');
 }
 
