@@ -184,6 +184,8 @@
   .schema-hotspot:hover .schema-hotspot-label { opacity: 1; }
   .schema-hotspot-editor { position: absolute; border: 2px dashed var(--danger); background: rgba(239,68,68,0.18); border-radius: 50%; cursor: pointer; }
   .schema-hotspot-editor .hs-del { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; background: var(--danger); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; }
+  .schema-hotspot-editor.schema-hotspot-notfound { border-color: var(--amber); background: rgba(245,158,11,0.22); }
+  .schema-hotspot-editor.schema-hotspot-notfound .hs-mark { position: absolute; top: -10px; left: -10px; width: 20px; height: 20px; background: var(--amber-dark, #b45309); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; pointer-events: none; }
   .schema-thumb-card { border: 1.5px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; background: var(--surface); transition: box-shadow .15s, transform .15s; }
   .schema-thumb-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
   .schema-thumb-card img { width: 100%; height: 190px; object-fit: contain; background: var(--surface2); display: block; padding: 6px; box-sizing: border-box; }
@@ -1785,6 +1787,8 @@
     <div class="modal-body">
       <input type="text" id="hotspot-article-search" placeholder="Rechercher par description, SAP, mots-clés..." oninput="filterHotspotArticleOptions()" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:14px">
       <div id="hotspot-article-results" style="max-height:320px;overflow-y:auto;margin-top:10px"></div>
+      <button class="btn btn-outline" style="width:100%;margin-top:12px;color:var(--amber-dark);border-color:var(--amber)" onclick="markHotspotNotFound()">❓ Marquer "pièce introuvable dans le catalogue"</button>
+      <p style="font-size:11px;color:var(--text3);margin-top:6px">Utile pour te souvenir que tu as déjà cherché celle-ci sans résultat — évite de la re-chercher inutilement plus tard, et évite de confondre avec une zone pas encore traitée.</p>
     </div>
   </div>
 </div>
@@ -3677,11 +3681,15 @@ function renderHotspotsOverlay(wrapId, hotspots, mode) {
     const el = document.createElement('div');
     const style = `left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%`;
     if(mode === 'edit') {
-      el.className = 'schema-hotspot-editor';
+      el.className = h.notFound ? 'schema-hotspot-editor schema-hotspot-notfound' : 'schema-hotspot-editor';
       el.style.cssText = style;
-      el.innerHTML = `<span class="hs-del" onclick="event.stopPropagation();removeHotspot(${i})">✕</span>`;
+      el.innerHTML = `${h.notFound ? '<span class="hs-mark">❓</span>' : ''}<span class="hs-del" onclick="event.stopPropagation();removeHotspot(${i})">✕</span>`;
       el.title = h.label || '';
     } else {
+      // Un repère "introuvable" est un pense-bête interne pour toi, pas une
+      // info utile pour un mécanicien — on ne l'affiche jamais dans la
+      // visionneuse publique, uniquement en mode édition.
+      if(h.notFound) return;
       const a = DB.articles.find(x => x.id === h.articleId);
       el.className = 'schema-hotspot';
       el.style.cssText = style;
@@ -4818,6 +4826,20 @@ function chooseHotspotArticle(articleId) {
   renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
 }
 
+// Marque une zone comme "recherchée mais introuvable dans le catalogue" —
+// contrairement à annuler (qui supprime la zone sans laisser de trace), ça
+// garde un repère visuel distinct pour ne pas confondre plus tard "pas
+// encore traité" et "déjà cherché, résultat négatif".
+function markHotspotNotFound() {
+  if(pendingHotspotIndex === null) return;
+  schemaHotspots[pendingHotspotIndex].articleId = null;
+  schemaHotspots[pendingHotspotIndex].notFound = true;
+  schemaHotspots[pendingHotspotIndex].label = 'Pièce introuvable dans le catalogue';
+  pendingHotspotIndex = null;
+  closeModal('modal-hotspot-picker');
+  renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
+}
+
 async function saveSchema() {
   const titre = sanitizeInput(document.getElementById('schema-titre').value);
   const categorie = document.getElementById('schema-categorie').value;
@@ -4838,7 +4860,7 @@ async function saveSchema() {
   }
 
   const cheminCatalogue = sanitizeInput(document.getElementById('schema-chemin-catalogue').value);
-  const data = { titre, categorie, image: imageUrl, cheminCatalogue, hotspots: schemaHotspots.filter(h => h.articleId) };
+  const data = { titre, categorie, image: imageUrl, cheminCatalogue, hotspots: schemaHotspots.filter(h => h.articleId || h.notFound) };
 
   if(schemaEditingId) {
     const idx = DB.schemas.findIndex(s => s.id === schemaEditingId);
@@ -5932,7 +5954,7 @@ function renderAdminSchemaList() {
   grid.innerHTML = schemas.map(s => `
     <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')">
       <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
-      <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${escapeHtml(s.categorie)} · ${(s.hotspots||[]).length} pièce(s)</span></div>
+      <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${escapeHtml(s.categorie)} · ${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
     </div>`).join('');
 }
 
