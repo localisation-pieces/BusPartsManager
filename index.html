@@ -3893,6 +3893,14 @@ function filterArticles() {
   const badge = document.getElementById('catalog-count-badge');
   if(badge) { badge.textContent = arts.length; badge.style.display = arts.length ? '' : 'none'; }
 
+  // Mémorise la dernière recherche texte et son nombre de résultats — sert
+  // à l'apprentissage automatique des mots-clés : si une recherche ne donne
+  // RIEN, puis que l'utilisateur ajoute quand même une pièce au panier peu
+  // après (trouvée autrement : schéma, scan...), ce mot devient
+  // probablement un synonyme utile à ajouter à cette pièce.
+  lastCatalogSearchQuery = q.trim();
+  lastCatalogSearchResultCount = q.trim() ? arts.length : null;
+
   // Chaque nouveau filtrage repart de la première page. On garde la liste
   // complète en mémoire (catalogFilteredArts) pour que "Charger plus" puisse
   // juste agrandir la tranche affichée, sans refaire tout le filtrage.
@@ -3909,6 +3917,75 @@ function filterArticles() {
 // sensible à mesure que le catalogue grossit. Le rendu reste identique,
 // juste étalé sur plusieurs pages via le bouton "Charger plus".
 const CATALOG_PAGE_SIZE = 60;
+let lastCatalogSearchQuery = '';       // dernière recherche texte tapée dans le catalogue
+let lastCatalogSearchResultCount = null; // son nombre de résultats (null si pas de recherche en cours)
+
+// Distance de Levenshtein (nombre minimal de modifications d'un mot à
+// l'autre) — sert à détecter les fautes de frappe ("salent" -> "silent")
+// sans avoir besoin d'un dictionnaire figé à l'avance.
+function levenshtein(a, b) {
+  if(a === b) return 0;
+  if(!a.length) return b.length;
+  if(!b.length) return a.length;
+  let prev = Array(b.length + 1).fill(0).map((_, i) => i);
+  for(let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for(let j = 1; j <= b.length; j++) {
+      curr[j] = a[i-1] === b[j-1]
+        ? prev[j-1]
+        : 1 + Math.min(prev[j-1], prev[j], curr[j-1]);
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+// Index (mis en cache) de tous les mots distincts présents dans les
+// désignations/mots-clés du catalogue, avec le nombre de pièces où chacun
+// apparaît — reconstruit seulement si le nombre d'articles a changé, pour
+// ne pas le recalculer à chaque frappe.
+let fuzzyWordIndexCache = null;
+let fuzzyWordIndexArticleCount = -1;
+function getFuzzyWordIndex() {
+  if(fuzzyWordIndexCache && fuzzyWordIndexArticleCount === DB.articles.length) return fuzzyWordIndexCache;
+  const index = {};
+  DB.articles.forEach(a => {
+    const words = (a.desc + ' ' + (a.keywords||'')).toLowerCase().split(/[^a-zàâäéèêëïîôöùûüç0-9]+/).filter(w => w.length >= 3);
+    new Set(words).forEach(w => { index[w] = (index[w] || 0) + 1; });
+  });
+  fuzzyWordIndexCache = index;
+  fuzzyWordIndexArticleCount = DB.articles.length;
+  return index;
+}
+
+// Pour une recherche sans résultat, propose jusqu'à 4 mots proches
+// orthographiquement (fautes de frappe probables), triés par pertinence.
+// Le seuil de tolérance s'adapte à la longueur du mot (plus permissif sur
+// un mot long) pour éviter les faux positifs sur les mots courts.
+function getFuzzySuggestions(query) {
+  const terms = query.toLowerCase().split(/[,\s]+/).filter(t => t.length >= 3);
+  if(!terms.length) return [];
+  const index = getFuzzyWordIndex();
+  const scored = [];
+  terms.forEach(term => {
+    const maxDist = term.length <= 5 ? 1 : term.length <= 8 ? 2 : 3;
+    Object.keys(index).forEach(word => {
+      if(word === term) return; // déjà cherché, n'aurait pas donné 0 résultat
+      const dist = levenshtein(term, word);
+      if(dist <= maxDist) scored.push({ word, dist, count: index[word] });
+    });
+  });
+  const seen = new Set();
+  return scored
+    .sort((a,b) => a.dist - b.dist || b.count - a.count)
+    .filter(s => { if(seen.has(s.word)) return false; seen.add(s.word); return true; })
+    .slice(0, 4);
+}
+
+function useFuzzySuggestion(word) {
+  document.getElementById('search-input').value = word;
+  filterArticles();
+}
 let catalogFilteredArts = [];
 let catalogRenderLimit = CATALOG_PAGE_SIZE;
 let catalogRotationMap = null; // non-null uniquement quand le tri "Rotation" est actif
@@ -3923,7 +4000,20 @@ function renderArticleGrid(q) {
   const arts = catalogFilteredArts;
   const grid = document.getElementById('article-grid');
   if(!arts.length) {
-    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🔍</div><p>Aucun article trouvé</p></div>';
+    let suggestionsHtml = '';
+    if(q && q.trim()) {
+      const suggestions = getFuzzySuggestions(q);
+      if(suggestions.length) {
+        suggestionsHtml = `
+          <div style="margin-top:14px">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:8px">Vouliez-vous dire :</p>
+            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+              ${suggestions.map(s => `<button class="btn btn-outline btn-sm" onclick="useFuzzySuggestion('${s.word.replace(/'/g,"\\'")}')">${escapeHtml(s.word)} <span style="color:var(--text3);font-weight:400">(${s.count})</span></button>`).join('')}
+            </div>
+          </div>`;
+      }
+    }
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🔍</div><p>Aucun article trouvé</p>${suggestionsHtml}</div>`;
     return;
   }
 
@@ -4088,6 +4178,32 @@ function cardQtyChange(id, d) {
   if(el) el.textContent = cardQtys[id];
 }
 
+// Apprentissage automatique du vocabulaire terrain : si la dernière
+// recherche tapée dans le catalogue n'a donné AUCUN résultat, et que
+// l'utilisateur ajoute quand même une pièce au panier peu après (trouvée
+// autrement : schéma, scan, navigation par organe...), ce mot est
+// probablement un synonyme utile — on l'ajoute automatiquement aux
+// mots-clés de cette pièce pour que la prochaine personne qui tape ce mot
+// la trouve directement, sans repasser par la même impasse.
+function tryLearnKeywordFromFailedSearch(article) {
+  if(lastCatalogSearchResultCount !== 0 || !lastCatalogSearchQuery) return;
+  const term = lastCatalogSearchQuery;
+  const existingKeywords = (article.keywords || '').toLowerCase();
+  // Terme déjà utilisé nulle part sur la fiche : évite les doublons si le
+  // même mot est réappris plusieurs fois pour la même pièce.
+  if(existingKeywords.includes(term.toLowerCase())) {
+    lastCatalogSearchQuery = ''; lastCatalogSearchResultCount = null;
+    return;
+  }
+  article.keywords = (article.keywords ? article.keywords + ', ' : '') + term;
+  save();
+  showNotif('💡', 'Mot-clé appris', `"${term}" ajouté aux mots-clés de "${article.desc}"`);
+  // Consommé : on ne veut pas retagger par erreur un autre article ajouté
+  // juste après avec le même mot.
+  lastCatalogSearchQuery = '';
+  lastCatalogSearchResultCount = null;
+}
+
 function addToCartFromCard(id) {
   const a = DB.articles.find(x => x.id === id);
   if(!a) return;
@@ -4104,6 +4220,7 @@ function addToCartFromCard(id) {
   saveCart();
   showNotif('🛒', 'Ajouté au panier', a.desc + ' × ' + qty + (existing ? ' (total: '+totalQty+')' : ''));
   if(a.alerte) showReturnReminder(a.alerte);
+  tryLearnKeywordFromFailedSearch(a);
 }
 
 function addToCart(id) {
@@ -4120,6 +4237,7 @@ function addToCart(id) {
   closeModal('modal-article-detail');
   showNotif('🛒', 'Ajouté au panier', a.desc + ' × ' + qtyToAdd + (existing ? ' (total: '+totalQty+')' : ''));
   if(a.alerte) showReturnReminder(a.alerte);
+  tryLearnKeywordFromFailedSearch(a);
 }
 
 // Affiche le popup de rappel (style de l'appli, purement informatif — pas
