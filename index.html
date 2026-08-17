@@ -3777,6 +3777,11 @@ function toggleSchemaArticleList() {
   }
 }
 
+// Sélection en cours dans la vue liste d'un schéma : articleId -> quantité.
+// Un article présent dans cet objet est "coché" ; sa quantité est modifiable
+// via les petits boutons +/-. Remis à zéro à chaque ouverture de la liste.
+let schemaListSelection = {};
+
 function renderSchemaArticleList(s) {
   const panel = document.getElementById('schema-viewer-article-list');
   const hotspots = s.hotspots || [];
@@ -3787,25 +3792,116 @@ function renderSchemaArticleList(s) {
   const seen = new Set();
   const uniqueArticles = articles.filter(a => { if(seen.has(a.id)) return false; seen.add(a.id); return true; });
 
+  schemaListSelection = {};
+
   if(!uniqueArticles.length) {
     panel.innerHTML = '<p style="font-size:13px;color:var(--text3);text-align:center;padding:24px">Aucune pièce reliée à ce schéma pour le moment.</p>';
     return;
   }
 
   panel.innerHTML = `
-    <p style="font-size:12px;color:var(--text3);margin-bottom:10px">${uniqueArticles.length} pièce${uniqueArticles.length>1?'s':''} reliée${uniqueArticles.length>1?'s':''} à ce schéma :</p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
-      ${uniqueArticles.map(a => `
-        <div onclick="openArticleDetail('${a.id}')" style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;background:var(--surface);transition:box-shadow .15s" onmouseover="this.style.boxShadow='var(--shadow)'" onmouseout="this.style.boxShadow='none'">
-          <div style="width:44px;height:44px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
-            ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_100,h_100,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}</div>
-            <div style="font-size:11px;color:var(--text3)">SAP ${escapeHtml(a.sap)}</div>
-          </div>
-        </div>`).join('')}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <p style="font-size:12px;color:var(--text3);margin:0">${uniqueArticles.length} pièce${uniqueArticles.length>1?'s':''} reliée${uniqueArticles.length>1?'s':''} — coche celles dont tu as besoin</p>
+      <button class="btn btn-outline btn-sm" onclick="toggleAllSchemaListSelection()">Tout cocher</button>
+    </div>
+    <div id="schema-list-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+      ${uniqueArticles.map(a => renderSchemaListCard(a)).join('')}
+    </div>
+    <div style="position:sticky;bottom:0;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);background:var(--surface);display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" id="schema-list-addcart-btn" onclick="addSelectedSchemaArticlesToCart()" disabled>🛒 Ajouter au panier</button>
     </div>`;
+}
+
+function renderSchemaListCard(a) {
+  const selected = schemaListSelection[a.id] !== undefined;
+  const qty = selected ? schemaListSelection[a.id] : 1;
+  return `
+    <div id="schema-list-card-${a.id}" onclick="toggleSchemaListSelection('${a.id}', event)" style="display:flex;align-items:center;gap:10px;padding:8px;border:1.5px solid ${selected?'var(--primary)':'var(--border)'};border-radius:var(--radius);cursor:pointer;background:${selected?'var(--primary-light, #eef4ff)':'var(--surface)'};transition:all .15s">
+      <input type="checkbox" ${selected?'checked':''} style="width:17px;height:17px;flex-shrink:0;pointer-events:none">
+      <div style="width:40px;height:40px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_100,h_100,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
+      </div>
+      <div style="flex:1;min-width:0" onclick="event.stopPropagation();openArticleDetail('${a.id}')">
+        <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}</div>
+        <div style="font-size:11px;color:var(--text3)">SAP ${escapeHtml(a.sap)}</div>
+      </div>
+      ${selected ? `
+        <div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:4px;background:var(--surface);border-radius:8px;border:1px solid var(--border);padding:2px 4px;flex-shrink:0">
+          <button onclick="changeSchemaListQty('${a.id}',-1)" style="background:none;border:none;cursor:pointer;font-size:15px;font-weight:700;color:var(--text2);padding:0 4px;line-height:1">−</button>
+          <span style="font-size:12px;font-weight:700;min-width:16px;text-align:center">${qty}</span>
+          <button onclick="changeSchemaListQty('${a.id}',1)" style="background:none;border:none;cursor:pointer;font-size:15px;font-weight:700;color:var(--text2);padding:0 4px;line-height:1">+</button>
+        </div>` : ''}
+    </div>`;
+}
+
+function toggleSchemaListSelection(articleId, e) {
+  if(e && e.target && e.target.closest && e.target.closest('[onclick*="openArticleDetail"]')) return;
+  if(schemaListSelection[articleId] !== undefined) delete schemaListSelection[articleId];
+  else schemaListSelection[articleId] = 1;
+  refreshSchemaListCard(articleId);
+  updateSchemaListAddButton();
+}
+
+function changeSchemaListQty(articleId, delta) {
+  if(schemaListSelection[articleId] === undefined) return;
+  schemaListSelection[articleId] = Math.max(1, schemaListSelection[articleId] + delta);
+  refreshSchemaListCard(articleId);
+}
+
+function refreshSchemaListCard(articleId) {
+  const a = DB.articles.find(x => x.id === articleId);
+  const el = document.getElementById('schema-list-card-' + articleId);
+  if(a && el) el.outerHTML = renderSchemaListCard(a);
+}
+
+function toggleAllSchemaListSelection() {
+  const s = (DB.schemas || []).find(x => x.id === currentSchemaId);
+  if(!s) return;
+  const hotspots = s.hotspots || [];
+  const articles = hotspots.map(h => DB.articles.find(a => a.id === h.articleId)).filter(Boolean);
+  const seen = new Set();
+  const uniqueArticles = articles.filter(a => { if(seen.has(a.id)) return false; seen.add(a.id); return true; });
+  const allSelected = uniqueArticles.every(a => schemaListSelection[a.id] !== undefined);
+  if(allSelected) {
+    schemaListSelection = {};
+  } else {
+    uniqueArticles.forEach(a => { if(schemaListSelection[a.id] === undefined) schemaListSelection[a.id] = 1; });
+  }
+  renderSchemaArticleListRefreshOnly(uniqueArticles);
+  updateSchemaListAddButton();
+}
+
+function renderSchemaArticleListRefreshOnly(uniqueArticles) {
+  const container = document.getElementById('schema-list-cards');
+  if(container) container.innerHTML = uniqueArticles.map(a => renderSchemaListCard(a)).join('');
+}
+
+function updateSchemaListAddButton() {
+  const btn = document.getElementById('schema-list-addcart-btn');
+  if(!btn) return;
+  const count = Object.keys(schemaListSelection).length;
+  btn.disabled = count === 0;
+  btn.textContent = count > 0 ? `🛒 Ajouter ${count} pièce${count>1?'s':''} au panier` : '🛒 Ajouter au panier';
+}
+
+// Ajoute d'un coup toutes les pièces cochées dans la vue liste du schéma,
+// avec leur quantité respective — évite de devoir ouvrir chaque fiche une
+// par une quand un mécanicien a besoin de plusieurs pièces du même schéma.
+function addSelectedSchemaArticlesToCart() {
+  const ids = Object.keys(schemaListSelection);
+  if(!ids.length) return;
+  ids.forEach(id => {
+    const qty = schemaListSelection[id];
+    const existing = cart.find(c => c.id === id);
+    if(existing) existing.qty += qty;
+    else cart.push({ id, qty });
+  });
+  updateCartBadge();
+  saveCart();
+  const total = ids.reduce((s,id) => s + schemaListSelection[id], 0);
+  showNotif('🛒', 'Ajouté au panier', `${ids.length} référence${ids.length>1?'s':''} (${total} pièce${total>1?'s':''} au total)`);
+  schemaListSelection = {};
+  closeModal('modal-schema-viewer');
 }
 
 function populateFournisseurFilter() {
