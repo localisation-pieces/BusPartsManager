@@ -779,6 +779,7 @@
               <option value="rotation-asc">🔄 Rotation (moins demandées en premier)</option>
               <option value="nom">Nom (A → Z)</option>
             </select>
+            <button class="btn btn-outline" id="reset-filters-btn" onclick="resetCatalogFilters()" style="display:none">✕ Réinitialiser les filtres</button>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
@@ -3864,6 +3865,20 @@ function debouncedFilterArticles() {
   filterArticlesDebounceTimer = setTimeout(filterArticles, 180);
 }
 
+// Remet tous les filtres du catalogue à zéro d'un coup (pas la recherche
+// texte, ni le tri — juste les filtres qui restreignent les résultats).
+// Le bouton qui déclenche ça n'est visible que si un filtre est actif,
+// justement pour éviter d'oublier qu'on en a laissé un allumé.
+function resetCatalogFilters() {
+  ['filter-magasin', 'filter-bus', 'filter-type', 'filter-marque', 'filter-categorie', 'filter-fournisseur'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  });
+  const refInput = document.getElementById('filter-fournisseur-ref');
+  if(refInput) refInput.value = '';
+  filterArticles();
+}
+
 function filterArticles() {
   adjustCatalogToolbarSticky();
 
@@ -3876,6 +3891,12 @@ function filterArticles() {
   const fournisseur = document.getElementById('filter-fournisseur') ? document.getElementById('filter-fournisseur').value : '';
   const fournisseurRefQuery = document.getElementById('filter-fournisseur-ref') ? document.getElementById('filter-fournisseur-ref').value.trim().toLowerCase() : '';
   const sort = document.getElementById('filter-sort') ? document.getElementById('filter-sort').value : '';
+
+  const resetBtn = document.getElementById('reset-filters-btn');
+  if(resetBtn) {
+    const hasActiveFilter = !!(mag || bus || type || marque || categorie || fournisseur || fournisseurRefQuery);
+    resetBtn.style.display = hasActiveFilter ? '' : 'none';
+  }
 
   let arts = DB.articles.filter(a => {
     const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.categorie||'')+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
