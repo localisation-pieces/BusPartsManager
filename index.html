@@ -179,6 +179,11 @@
   .schema-img-wrap { position: relative; display: block; max-width: 100%; width: fit-content; margin: 0 auto; user-select: none; touch-action: none; }
   .schema-img-wrap img { display: block; max-width: 100%; max-height: 62vh; width: auto; height: auto; border-radius: 8px; margin: 0 auto; }
   .schema-hotspot { position: absolute; border: 2px solid var(--primary); background: rgba(59,130,246,0.18); border-radius: 50%; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+  .schema-hotspot.schema-hotspot-highlight { animation: schemaHotspotPulse 0.65s ease-in-out 3; }
+  @keyframes schemaHotspotPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.7); border-color: var(--primary); }
+    50% { box-shadow: 0 0 0 10px rgba(59,130,246,0); border-color: var(--amber-dark, #b45309); background: rgba(245,158,11,0.35); }
+  }
   .schema-hotspot:hover { background: rgba(59,130,246,0.38); border-color: var(--primary-dark, var(--primary)); }
   .schema-hotspot-label { position: absolute; bottom: 100%; left: 0; background: var(--navy); color: white; font-size: 10.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.1s; margin-bottom: 3px; }
   .schema-hotspot:hover .schema-hotspot-label { opacity: 1; }
@@ -3694,6 +3699,7 @@ function renderHotspotsOverlay(wrapId, hotspots, mode) {
       const a = DB.articles.find(x => x.id === h.articleId);
       el.className = 'schema-hotspot';
       el.style.cssText = style;
+      el.dataset.articleId = h.articleId || '';
       el.innerHTML = `<span class="schema-hotspot-label">${escapeHtml(a ? a.desc : (h.label||'Pièce introuvable'))}</span>`;
       // On ne ferme PAS la visionneuse de schéma : la fiche s'ouvre par-dessus,
       // et fermer la fiche ramène directement au schéma, prêt pour cliquer
@@ -3705,7 +3711,7 @@ function renderHotspotsOverlay(wrapId, hotspots, mode) {
 }
 
 let currentSchemaId = null;
-function openSchemaViewer(schemaId) {
+function openSchemaViewer(schemaId, highlightArticleId) {
   const s = (DB.schemas || []).find(x => x.id === schemaId);
   if(!s) return;
   currentSchemaId = schemaId;
@@ -3719,7 +3725,19 @@ function openSchemaViewer(schemaId) {
   }
   const img = document.getElementById('schema-viewer-img');
   img.src = cloudinaryOptimized(s.image, 'w_1400');
-  img.onload = () => renderHotspotsOverlay('schema-viewer-imgwrap', s.hotspots, 'view');
+  img.onload = () => {
+    renderHotspotsOverlay('schema-viewer-imgwrap', s.hotspots, 'view');
+    // Repère venu de la fiche article : fait clignoter brièvement la zone
+    // correspondante pour la repérer d'un coup d'œil sur un schéma chargé.
+    if(highlightArticleId) {
+      const el = document.querySelector(`#schema-viewer-imgwrap .schema-hotspot[data-article-id="${highlightArticleId}"]`);
+      if(el) {
+        el.classList.add('schema-hotspot-highlight');
+        el.scrollIntoView({behavior:'smooth', block:'center'});
+        setTimeout(() => el.classList.remove('schema-hotspot-highlight'), 2600);
+      }
+    }
+  };
   document.getElementById('schema-viewer-edit-btn').setAttribute('onclick', `closeModal('modal-schema-viewer');openSchemaEditor('${s.id}')`);
   document.getElementById('schema-viewer-back-btn').setAttribute('onclick', `closeModal('modal-schema-viewer');openSchemaList('${s.categorie.replace(/'/g,"\\'")}')`);
 
@@ -4071,6 +4089,23 @@ function highlight(text, q) {
   return safe.replace(re, '<mark class="highlight">$1</mark>');
 }
 
+// Retour pièce -> schéma : si cette pièce est reliée à une ou plusieurs
+// zones sur un ou plusieurs schémas, affiche un lien direct pour ouvrir le
+// bon schéma depuis sa fiche — l'inverse du clic sur une zone qui ouvre la
+// pièce. Une même pièce peut apparaître sur plusieurs schémas (organes
+// différents, ou plusieurs vues d'un même organe).
+function renderArticleSchemaLinks(articleId) {
+  const schemas = (DB.schemas || []).filter(s => (s.hotspots || []).some(h => h.articleId === articleId));
+  if(!schemas.length) return '';
+  return `
+    <div style="margin-top:14px;padding:12px 14px;background:var(--surface2);border-radius:var(--radius);border:1px solid var(--border)">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">📐 Localisée sur ${schemas.length > 1 ? 'ces schémas' : 'ce schéma'}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${schemas.map(s => `<button class="btn btn-outline btn-sm" onclick="closeModal('modal-article-detail');openSchemaViewer('${s.id}', '${articleId}')">📐 ${escapeHtml(s.titre)} <span style="color:var(--text3);font-weight:400">(${escapeHtml(s.categorie)})</span></button>`).join('')}
+      </div>
+    </div>`;
+}
+
 function renderArticleMovements(articleId) {
   const movements = getArticleMovements(articleId).slice(0, 15);
   if(!movements.length) {
@@ -4137,6 +4172,7 @@ function openArticleDetail(id) {
       </div>
     </div>` : ''}
     ${a.keywords ? `<div style="margin-top:12px;font-size:12px;color:var(--text3)">🏷️ ${a.keywords.split(',').map(k=>`<span class="badge badge-gray" style="margin-right:4px">${escapeHtml(k.trim())}</span>`).join('')}</div>` : ''}
+    ${renderArticleSchemaLinks(a.id)}
     ${canEdit ? renderArticleMovements(a.id) : ''}
     <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:12px">
