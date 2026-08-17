@@ -1217,17 +1217,6 @@
           </div>
         </div>
         <div class="form-group">
-          <label>Photo / capture d'écran d'emplacement <span style="font-size:11px;color:var(--text3);font-weight:400">(optionnel — utile si la photo seule ne suffit pas à localiser la pièce sur le bus)</span></label>
-          <div id="img-preview-wrap-2">
-            <img id="article-img-preview-2" class="img-preview" alt="preview emplacement">
-            <label class="upload-label" for="article-photo-emplacement-input"><span id="upload-label-text-2">📍 Choisir une photo / capture d'écran</span></label>
-            <input type="file" id="article-photo-emplacement-input" accept="image/*" onchange="previewImageEmplacement(this)">
-          </div>
-          <div id="emplacement-remove-wrap" style="display:none;margin-top:6px;text-align:right">
-            <button type="button" class="btn btn-outline" style="padding:5px 12px;font-size:12px" onclick="removeEmplacementPhoto()">🗑️ Retirer cette image</button>
-          </div>
-        </div>
-        <div class="form-group">
           <label>Article SAP * <span style="font-size:11px;color:var(--text3);font-weight:400">(8 chiffres exactement)</span></label>
           <div style="position:relative">
             <input type="text" id="art-sap" placeholder="ex: 12345678" maxlength="8" inputmode="numeric"
@@ -2433,8 +2422,6 @@ let currentOTOrderId = null;
 let currentBLOrderId = null;
 let pendingPhotoBlob = null;   // Photo compressée en attente d'upload (nouvelle sélection non encore enregistrée)
 let currentPhotoUrl = '';      // URL (ou ancien base64) de la photo actuelle de la pièce en cours d'édition
-let pendingPhotoEmplacementBlob = null; // Idem pour la 2e photo (emplacement / capture catalogue), en attente d'upload
-let currentPhotoEmplacementUrl = '';    // URL actuelle de la 2e photo (vide si aucune — la plupart des pièces n'en ont pas)
 
 let applyingRemote = false; // évite de renvoyer en boucle les données qu'on vient de recevoir
 
@@ -3602,6 +3589,21 @@ function renderCategoriesSecondairesCheckboxes(initialChecked) {
     </label>`).join('');
 }
 
+// Articles reliés à au moins un schéma (mis en cache, invalidé si le nombre
+// total de zones change) — pour afficher un petit repère 📐 sur la carte
+// catalogue sans recalculer ça pour chaque carte à chaque rendu.
+let schemaLinkedArticleIdsCache = null;
+let schemaLinkedArticleIdsCacheCount = -1;
+function getSchemaLinkedArticleIds() {
+  const totalHotspots = (DB.schemas || []).reduce((s, sc) => s + (sc.hotspots || []).length, 0);
+  if(schemaLinkedArticleIdsCache && schemaLinkedArticleIdsCacheCount === totalHotspots) return schemaLinkedArticleIdsCache;
+  const set = new Set();
+  (DB.schemas || []).forEach(s => (s.hotspots || []).forEach(h => { if(h.articleId) set.add(h.articleId); }));
+  schemaLinkedArticleIdsCache = set;
+  schemaLinkedArticleIdsCacheCount = totalHotspots;
+  return set;
+}
+
 function articleCategories(a) {
   const cats = [];
   if(a.categorie) cats.push(a.categorie);
@@ -4042,10 +4044,10 @@ function renderArticleGrid(q) {
 
   grid.innerHTML = visible.map(a => `
     <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
-      <div class="article-img" ${(a.photo || a.photoEmplacement) ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
-        ${(a.photo || a.photoEmplacement) ? `<img src="${cloudinaryOptimized(a.photo || a.photoEmplacement,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
+      <div class="article-img" ${a.photo ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
+        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
+        ${getSchemaLinkedArticleIds().has(a.id) ? `<span title="Localisée sur un schéma" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px">📐</span>` : ''}
         ${catalogRotationMap ? `<span class="badge" style="position:absolute;bottom:6px;left:6px;background:var(--navy);color:white">🔄 ${catalogRotationMap[a.id] || 0}</span>` : ''}
-        ${a.photoEmplacement ? `<span title="Photo d'emplacement disponible" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>` : ''}
         ${a.photo ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.5);color:white;font-size:10px;padding:2px 6px;border-radius:4px">🔍 Agrandir</span>` : ''}
       </div>
       <div class="article-body">
@@ -4141,8 +4143,8 @@ function openArticleDetail(id) {
   document.getElementById('detail-body').innerHTML = `
     ${a.alerte ? `<div style="margin-bottom:14px;padding:10px 14px;background:var(--amber-light);border:1.5px solid var(--amber);border-radius:var(--radius);color:var(--amber-dark);font-weight:700;font-size:13px">🔄 ${escapeHtml(a.alerte)}</div>` : ''}
     <div class="article-detail">
-      <div class="article-detail-img" ${(a.photo || a.photoEmplacement) ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
-        ${(a.photo || a.photoEmplacement) ? `<img src="${cloudinaryOptimized(a.photo || a.photoEmplacement,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
+      <div class="article-detail-img" ${a.photo ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
+        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
       </div>
       <div>
         <div class="detail-row"><span class="label">Référence SAP</span><span style="font-family:var(--font-mono);font-weight:800;font-size:19px;color:var(--amber-dark)">${a.sap}</span></div>
@@ -4303,8 +4305,6 @@ function openArticleModal(id) {
   const a = id ? DB.articles.find(x => x.id === id) : null;
   pendingPhotoBlob = null;
   currentPhotoUrl = (a && a.photo) ? a.photo : '';
-  pendingPhotoEmplacementBlob = null;
-  currentPhotoEmplacementUrl = (a && a.photoEmplacement) ? a.photoEmplacement : '';
 
   document.getElementById('article-modal-title').textContent = id ? 'Modifier la pièce' : 'Nouvelle pièce';
   const sapInput = document.getElementById('art-sap');
@@ -4339,23 +4339,6 @@ function openArticleModal(id) {
     prev.style.display = 'none';
     prev.src = '';
     if(lbl) lbl.textContent = '📷 Choisir une photo';
-  }
-
-  // Reset 2e champ (photo/capture d'écran d'emplacement)
-  document.getElementById('article-photo-emplacement-input').value = '';
-  const prev2 = document.getElementById('article-img-preview-2');
-  const lbl2 = document.getElementById('upload-label-text-2');
-  const removeWrap = document.getElementById('emplacement-remove-wrap');
-  if(currentPhotoEmplacementUrl) {
-    prev2.src = currentPhotoEmplacementUrl;
-    prev2.style.display = 'block';
-    if(lbl2) lbl2.textContent = '📍 Changer cette image';
-    if(removeWrap) removeWrap.style.display = 'block';
-  } else {
-    prev2.style.display = 'none';
-    prev2.src = '';
-    if(lbl2) lbl2.textContent = '📍 Choisir une photo / capture d\'écran';
-    if(removeWrap) removeWrap.style.display = 'none';
   }
 
   // Populate selects
@@ -4504,15 +4487,11 @@ function extractSapFromFilename(filename) {
   return match ? match[0] : null;
 }
 
-// Devine quel champ de la pièce ce fichier doit remplir, d'après son
-// extension : une capture d'écran (typiquement .png, ex: Windows Snipping
-// Tool ou capture du catalogue fournisseur) va dans "photoEmplacement" ;
-// une vraie photo (.jpg/.jpeg/.webp/...) va dans "photo". Ça évite qu'un
-// import mélangeant les deux types n'écrase le mauvais champ — chaque
-// fichier ne peut plus toucher que le champ qui correspond à son type.
+// Toutes les images importées vont dans le champ "photo" principal — l'ancien
+// champ "photoEmplacement" (2e photo/capture d'écran par article) a été
+// retiré, remplacé par le système de schémas par organe (bien plus complet).
 function bulkPhotoTargetField(filename) {
-  const ext = (filename.split('.').pop() || '').toLowerCase();
-  return ext === 'png' ? 'photoEmplacement' : 'photo';
+  return 'photo';
 }
 
 async function startBulkPhotoImport(fileList) {
@@ -4521,16 +4500,12 @@ async function startBulkPhotoImport(fileList) {
 
   // Un seul choix pour tout le lot (pas une question par doublon, ce qui
   // serait ingérable avec plusieurs centaines de photos) : soit on remplace
-  // systématiquement une image déjà présente, soit on ignore ces pièces-là.
-  // Ce choix s'applique séparément à chaque champ (photo / photoEmplacement)
-  // — voir bulkPhotoTargetField : un .png ne touche jamais la photo
-  // principale, et inversement.
+  // systématiquement une photo déjà présente, soit on ignore ces pièces-là.
   const remplacerExistantes = confirm(
     `${files.length} fichier(s) sélectionné(s).\n\n` +
-    `Les fichiers .png sont traités comme des captures d'écran d'emplacement, les autres (.jpg, .jpeg...) comme des photos de pièce — chacun va dans son propre champ, sans écraser l'autre.\n\n` +
-    `Certaines pièces ont peut-être déjà une image dans le champ concerné.\n\n` +
-    `OK = remplacer les images déjà présentes\n` +
-    `Annuler = ignorer les pièces qui ont déjà une image dans ce champ (ne garder que les nouvelles)`
+    `Certaines pièces ont peut-être déjà une photo.\n\n` +
+    `OK = remplacer les photos déjà présentes\n` +
+    `Annuler = ignorer les pièces qui ont déjà une photo (ne garder que les nouvelles)`
   );
 
   const bar = document.getElementById('bulk-photo-progress-bar');
@@ -4570,7 +4545,7 @@ async function startBulkPhotoImport(fileList) {
       continue;
     }
     const targetField = bulkPhotoTargetField(file.name);
-    const fieldLabel = targetField === 'photoEmplacement' ? "photo d'emplacement" : 'photo principale';
+    const fieldLabel = 'photo';
     if(article[targetField] && !remplacerExistantes) {
       addLog(`⏭️ ${file.name} — ${article.desc} a déjà une ${fieldLabel}, ignorée`, 'var(--text3)');
       ignore++;
@@ -4703,45 +4678,6 @@ async function previewImage(input) {
   }
 }
 
-// 2e image d'un article : photo ou capture d'écran (catalogue fournisseur)
-// montrant précisément où se situe la pièce sur le bus. Optionnelle — la
-// grande majorité des articles n'en auront pas, seul le champ photoEmplacement
-// est renseigné pour ceux qui en ont besoin (impact stockage négligeable).
-async function previewImageEmplacement(input) {
-  const file = input.files[0];
-  if(!file) return;
-  const lbl = document.getElementById('upload-label-text-2');
-  if(lbl) lbl.textContent = '⏳ Compression…';
-  try {
-    const blob = await compressImageToBlob(file, 900, 0.75);
-    pendingPhotoEmplacementBlob = blob;
-    const prev = document.getElementById('article-img-preview-2');
-    prev.src = URL.createObjectURL(blob);
-    prev.style.display = 'block';
-    if(lbl) lbl.textContent = '📍 Changer cette image';
-    const removeWrap = document.getElementById('emplacement-remove-wrap');
-    if(removeWrap) removeWrap.style.display = 'block';
-  } catch(e) {
-    if(lbl) lbl.textContent = currentPhotoEmplacementUrl ? '📍 Changer cette image' : '📍 Choisir une photo / capture d\'écran';
-    alert("Impossible de traiter cette image. Réessayez avec une autre photo.");
-  }
-}
-
-// Retire la 2e image (sans toucher à la photo principale). L'image reste
-// simplement inutilisée dans la médiathèque Cloudinary, comme pour un
-// remplacement de photo classique — cohérent avec le choix déjà fait de ne
-// jamais supprimer d'images côté Cloudinary depuis l'appli.
-function removeEmplacementPhoto() {
-  pendingPhotoEmplacementBlob = null;
-  currentPhotoEmplacementUrl = '';
-  document.getElementById('article-photo-emplacement-input').value = '';
-  const prev = document.getElementById('article-img-preview-2');
-  prev.style.display = 'none';
-  prev.src = '';
-  const lbl = document.getElementById('upload-label-text-2');
-  if(lbl) lbl.textContent = '📍 Choisir une photo / capture d\'écran';
-  document.getElementById('emplacement-remove-wrap').style.display = 'none';
-}
 
 // =============================
 // ÉDITEUR DE SCHÉMAS — image de vue éclatée + zones cliquables (hotspots)
@@ -5173,8 +5109,7 @@ async function saveArticle() {
     alerte: sanitizeInput(document.getElementById('art-alerte').value),
     qtyIntervention: sanitizeInput(document.getElementById('art-qty-intervention').value),
     marquesBus: getSelectedMarques(),
-    photo: currentPhotoUrl,
-    photoEmplacement: currentPhotoEmplacementUrl
+    photo: currentPhotoUrl
   };
 
   if(pendingPhotoBlob) {
@@ -5185,18 +5120,6 @@ async function saveArticle() {
       if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
       if(sapChanged && window.fbReleaseSAP) window.fbReleaseSAP(sap); // libère la réservation, l'enregistrement n'a pas abouti
       alert("Échec de l'envoi de la photo vers Cloudinary. Vérifiez la configuration (cloud name / upload preset) ainsi que votre connexion, puis réessayez.\n\nDétail technique : " + (e && e.message ? e.message : e));
-      return;
-    }
-  }
-
-  if(pendingPhotoEmplacementBlob) {
-    if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Envoi de l\'image d\'emplacement…'; }
-    try {
-      data.photoEmplacement = await uploadPhotoToCloudinary(articleId, pendingPhotoEmplacementBlob);
-    } catch(e) {
-      if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
-      if(sapChanged && window.fbReleaseSAP) window.fbReleaseSAP(sap);
-      alert("Échec de l'envoi de l'image d'emplacement vers Cloudinary. Vérifiez la connexion, puis réessayez.\n\nDétail technique : " + (e && e.message ? e.message : e));
       return;
     }
   }
@@ -5213,7 +5136,6 @@ async function saveArticle() {
   }
   save();
   pendingPhotoBlob = null;
-  pendingPhotoEmplacementBlob = null;
   if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
   closeModal('modal-article');
   filterArticles();
@@ -5774,13 +5696,10 @@ function downloadBLPdf() {
   showNotif('📥', 'PDF téléchargé', o.blNumero||'');
 }
 
-// Visionneuse photo. Accepte soit une URL unique (usage historique : outils,
-// kits...), soit un tableau d'URLs — dans ce dernier cas, des flèches
-// apparaissent pour naviguer entre les images (ex: photo de la pièce +
-// photo/capture d'écran d'emplacement). Les entrées vides sont ignorées,
-// donc appeler cette fonction avec [a.photo, a.photoEmplacement] est sûr
-// même si la 2e n'existe pas — le carrousel ne s'affiche que s'il y a
-// effectivement plus d'une image.
+// Visionneuse photo. Accepte soit une URL unique, soit un tableau (pour les
+// cas qui en ont vraiment plusieurs) — reste générique même si les articles
+// n'ont plus qu'une seule photo (le système de schémas remplace maintenant
+// la 2e photo/capture d'écran par article).
 let zoomImages = [];
 let zoomIndex = 0;
 
@@ -5793,12 +5712,10 @@ function openPhotoZoom(urlOrArray, e) {
   openModal('modal-photo-zoom');
 }
 
-// Ouvre la visionneuse pour une pièce donnée avec sa photo principale et,
-// si elle existe, son image d'emplacement — dans cet ordre.
 function openArticlePhotoZoom(articleId, e) {
   const a = DB.articles.find(x => x.id === articleId);
   if(!a) return;
-  openPhotoZoom([a.photo, a.photoEmplacement], e);
+  openPhotoZoom(a.photo, e);
 }
 
 function renderZoomImage() {
