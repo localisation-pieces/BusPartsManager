@@ -1725,6 +1725,7 @@
       <div id="schema-viewer-article-list" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:14px"></div>
     </div>
     <div class="modal-footer">
+      <button class="btn btn-outline" id="schema-viewer-back-btn" onclick="">← Retour aux schémas</button>
       <button class="btn btn-outline" onclick="closeModal('modal-schema-viewer')">Fermer</button>
       <button class="btn btn-outline staff-only" id="schema-viewer-edit-btn" onclick="">✏️ Modifier ce schéma</button>
     </div>
@@ -3720,6 +3721,7 @@ function openSchemaViewer(schemaId) {
   img.src = cloudinaryOptimized(s.image, 'w_1400');
   img.onload = () => renderHotspotsOverlay('schema-viewer-imgwrap', s.hotspots, 'view');
   document.getElementById('schema-viewer-edit-btn').setAttribute('onclick', `closeModal('modal-schema-viewer');openSchemaEditor('${s.id}')`);
+  document.getElementById('schema-viewer-back-btn').setAttribute('onclick', `closeModal('modal-schema-viewer');openSchemaList('${s.categorie.replace(/'/g,"\\'")}')`);
 
   // Repart toujours sur la vue "image" par défaut à l'ouverture, même si on
   // avait laissé la liste affichée pour un schéma précédent.
