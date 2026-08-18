@@ -7211,12 +7211,31 @@ function renderSettingList(type, renderFn) {
   const el = document.getElementById('settings-' + type);
   const items = DB.settings[type];
   if(!items.length) { el.innerHTML = '<div class="text-muted text-sm">Aucun élément</div>'; return; }
+  const reorderable = type === 'categories';
   el.innerHTML = items.map((v, i) => `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      ${reorderable ? `
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <button class="btn btn-outline btn-sm" style="padding:1px 7px;line-height:1.4;font-size:11px" onclick="moveCategoryItem(${i},-1)" ${i===0?'disabled':''} title="Monter">▲</button>
+          <button class="btn btn-outline btn-sm" style="padding:1px 7px;line-height:1.4;font-size:11px" onclick="moveCategoryItem(${i},1)" ${i===items.length-1?'disabled':''} title="Descendre">▼</button>
+        </div>` : ''}
       <div style="flex:1">${renderFn(v)}</div>
       <button class="btn btn-outline btn-sm" onclick="editSetting('${type}',${i})">✏️</button>
       <button class="btn btn-sm" style="background:var(--danger-light);color:var(--danger);border:none" onclick="deleteSetting('${type}',${i})">✕</button>
     </div>`).join('');
+}
+
+// L'ordre de cette liste pilote directement l'ordre des tuiles d'organe
+// dans le catalogue — pas besoin de glisser-déposer, juste ▲▼, ça reste
+// fiable sur tous les appareils (tactile compris).
+function moveCategoryItem(index, direction) {
+  const items = DB.settings.categories;
+  const newIndex = index + direction;
+  if(newIndex < 0 || newIndex >= items.length) return;
+  [items[index], items[newIndex]] = [items[newIndex], items[index]];
+  save();
+  renderSettingList('categories', v => v);
+  renderCategoryTiles();
 }
 
 function addSetting(type) {
