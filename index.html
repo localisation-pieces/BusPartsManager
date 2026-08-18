@@ -7357,7 +7357,29 @@ function saveSetting() {
   }
 
   if(editIdx !== '') {
-    DB.settings[type][editIdxNum] = newVal;
+    // Renommer une catégorie doit se répercuter sur TOUTES les pièces qui
+    // l'utilisent (catégorie principale ET secondaires) — sinon elles
+    // disparaîtraient silencieusement de toute tuile, avec l'ancien nom
+    // orphelin sur leur fiche et personne pour le remarquer.
+    if(type === 'categories') {
+      const oldVal = DB.settings.categories[editIdxNum];
+      if(oldVal !== newVal) {
+        let touched = 0;
+        DB.articles.forEach(a => {
+          let changed = false;
+          if(a.categorie === oldVal) { a.categorie = newVal; changed = true; }
+          if(a.categoriesSecondaires && a.categoriesSecondaires.includes(oldVal)) {
+            a.categoriesSecondaires = a.categoriesSecondaires.map(c => c === oldVal ? newVal : c);
+            changed = true;
+          }
+          if(changed) touched++;
+        });
+        DB.settings.categories[editIdxNum] = newVal;
+        if(touched > 0) showNotif('📂', 'Catégorie renommée', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
+      }
+    } else {
+      DB.settings[type][editIdxNum] = newVal;
+    }
   } else {
     DB.settings[type].push(newVal);
   }
@@ -7368,6 +7390,7 @@ function saveSetting() {
   populateMarqueFilter();
   populateCategorieFilter();
   populateFournisseurFilter();
+  filterArticles();
 }
 
 function deleteSetting(type, idx) {
