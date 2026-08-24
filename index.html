@@ -3900,6 +3900,14 @@ function addSelectedSchemaArticlesToCart() {
   saveCart();
   const total = ids.reduce((s,id) => s + schemaListSelection[id], 0);
   showNotif('🛒', 'Ajouté au panier', `${ids.length} référence${ids.length>1?'s':''} (${total} pièce${total>1?'s':''} au total)`);
+  // L'apprentissage automatique de mot-clé n'a de sens que si UNE seule
+  // pièce distincte a été ajoutée — avec plusieurs pièces différentes d'un
+  // coup, impossible de savoir laquelle correspondait vraiment à la
+  // recherche ratée, donc on ne tague rien pour éviter un mauvais lien.
+  if(ids.length === 1) {
+    const a = DB.articles.find(x => x.id === ids[0]);
+    if(a) tryLearnKeywordFromFailedSearch(a);
+  }
   schemaListSelection = {};
   closeModal('modal-schema-viewer');
 }
@@ -3919,8 +3927,18 @@ function populateFournisseurFilter() {
 // collé, qui ne correspondait jamais si les mots n'étaient pas côte à côte
 // dans le texte, exactement dans cet ordre — ce qui rendait en pratique
 // la recherche par plusieurs mots-clés inutilisable.
+// Petits mots de liaison à ignorer dans une recherche multi-mots : "vanne
+// barrage" et "vanne de barrage" doivent trouver la même pièce, sans que
+// "de" empêche le résultat juste parce qu'il n'est pas repris mot pour mot
+// sur la fiche.
+const FRENCH_STOPWORDS = new Set(['de','du','des','la','le','les','un','une','et','a','au','aux','en','pour','sur','avec','sans']);
+
 function matchesSearchTerms(text, query) {
-  const terms = query.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+  let terms = query.split(/[,\s]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+  const meaningful = terms.filter(t => !FRENCH_STOPWORDS.has(t));
+  // Si TOUT était des mots de liaison (cas limite improbable, ex: recherche
+  // "de"), on les garde plutôt que de tout faire matcher par erreur.
+  if(meaningful.length) terms = meaningful;
   if(!terms.length) return true;
   return terms.every(term => text.includes(term));
 }
