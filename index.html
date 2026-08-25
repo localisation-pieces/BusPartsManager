@@ -962,6 +962,7 @@
                 <th style="text-align:center">⏱ Tps prépa.</th>
                 <th style="text-align:center">⏱ Tps total</th>
                 <th>BL / OT</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="journal-tbody"></tbody>
@@ -9170,6 +9171,7 @@ function renderJournalTable(rows) {
       <td style="text-align:center"><span style="${prepColor}">${formatDuration(o.prepDelay)}</span></td>
       <td style="text-align:center"><span style="${totalColor}">${formatDuration(o.totalDelay)}</span></td>
       <td style="font-size:11px;font-family:var(--font-mono)">${o.blNumero ? `<span style="color:var(--navy)">${escapeHtml(o.blNumero)}</span>` : ''}${o.otNumber ? `<br><span style="color:var(--text3)">OT: ${escapeHtml(o.otNumber)}</span>` : ''}</td>
+      <td>${(o.status === 'delivered' || o.status === 'prepared') ? `<button class="btn btn-outline btn-sm" onclick="${o.kitId ? `openKitBLModal('${o.id}')` : `openBLModal('${o.id}')`}">👁️ Voir</button>` : ''}</td>
     </tr>`;
   }).join('');
 }
