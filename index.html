@@ -1389,8 +1389,8 @@
       <div class="form-group" style="margin-bottom:0">
         <label>Type de bus compatible</label>
         <div style="display:flex;gap:8px;margin-top:6px">
-          <button type="button" id="kit-chk-standard" onclick="toggleChk(this)" style="padding:7px 16px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid var(--border2);background:var(--surface2);color:var(--text2);transition:all .15s">🚌 Standard</button>
-          <button type="button" id="kit-chk-articule" onclick="toggleChk(this)" style="padding:7px 16px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid var(--border2);background:var(--surface2);color:var(--text2);transition:all .15s">🚌 Articulé</button>
+          <button type="button" id="kit-chk-standard" onclick="toggleChk(this);renderKitArticlesList()" style="padding:7px 16px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid var(--border2);background:var(--surface2);color:var(--text2);transition:all .15s">🚌 Standard</button>
+          <button type="button" id="kit-chk-articule" onclick="toggleChk(this);renderKitArticlesList()" style="padding:7px 16px;border-radius:20px;font-size:13px;font-weight:500;cursor:pointer;border:1.5px solid var(--border2);background:var(--surface2);color:var(--text2);transition:all .15s">🚌 Articulé</button>
         </div>
       </div>
       <div class="form-group" style="margin-bottom:0">
@@ -1410,6 +1410,8 @@
     </div>
     <div style="margin-top:10px;font-size:12px;color:var(--text3)">💡 Un kit doit contenir au minimum 2 pièces. Vous pouvez ajuster les quantités individuellement.</div>
     <div class="modal-footer">
+      <button class="btn btn-outline" onclick="printKitDefinition()">🖨️ Imprimer la liste</button>
+      <div style="flex:1"></div>
       <button class="btn btn-outline" onclick="closeModal('modal-kit')">Annuler</button>
       <button class="btn btn-primary" onclick="saveKit()">💾 Enregistrer le kit</button>
     </div>
@@ -7781,6 +7783,7 @@ function filterKitArticleOptions() {
 // recherche pour en ajouter une autre facilement à la suite.
 function kitArticleQuickAdd(articleId) {
   const existing = kitArticlesData.find(ka => ka.articleId === articleId);
+  if(!existing) checkKitArticleBusCompatibility(DB.articles.find(x => x.id === articleId));
   if(existing) { existing.qty++; }
   else { kitArticlesData.push({ articleId, qty: 1 }); }
   renderKitArticlesList();
@@ -7790,19 +7793,51 @@ function kitArticleQuickAdd(articleId) {
   document.getElementById('kit-article-search-results').style.display = 'none';
 }
 
+// Vérifie que la pièce couvre bien tous les types de bus annoncés par le
+// kit — si non, propose de corriger la compatibilité bus de la pièce
+// plutôt que de laisser passer une incohérence silencieuse (ex: un kit
+// "Standard + Articulé" qui contiendrait une pièce marquée uniquement
+// "Standard").
+function checkKitArticleBusCompatibility(a) {
+  if(!a) return;
+  const kitStandard = isChk('kit-chk-standard');
+  const kitArticule = isChk('kit-chk-articule');
+  const missing = [];
+  if(kitStandard && !a.busStandard) missing.push('Standard');
+  if(kitArticule && !a.busArticule) missing.push('Articulé');
+  if(!missing.length) return;
+  const kitTypes = [kitStandard && 'Standard', kitArticule && 'Articulé'].filter(Boolean).join(' + ');
+  const corriger = confirm(
+    `⚠️ "${a.desc}" n'est pas marquée compatible avec : ${missing.join(', ')} — pourtant ce kit couvre ${kitTypes}.\n\n` +
+    `Voulez-vous corriger la compatibilité bus de cette pièce pour qu'elle couvre aussi ${missing.join(' et ')} ?\n\n` +
+    `OK = corriger la pièce\nAnnuler = l'ajouter quand même, sans corriger`
+  );
+  if(corriger) {
+    if(kitStandard) a.busStandard = true;
+    if(kitArticule) a.busArticule = true;
+    save();
+  }
+}
+
 function renderKitArticlesList() {
   const el = document.getElementById('kit-articles-list');
   if(!kitArticlesData.length) {
     el.innerHTML = '<div class="text-muted text-sm" style="padding:10px 0">Aucun article — ajoutez des articles depuis la liste ci-dessous</div>';
     return;
   }
+  const kitStandard = isChk('kit-chk-standard');
+  const kitArticule = isChk('kit-chk-articule');
   el.innerHTML = kitArticlesData.map((ka,i) => {
     const a = DB.articles.find(x=>x.id===ka.articleId);
     if(!a) return '';
+    const missing = [];
+    if(kitStandard && !a.busStandard) missing.push('Standard');
+    if(kitArticule && !a.busArticule) missing.push('Articulé');
     return `<div class="item-line">
       <div style="flex:1">
         <div style="font-size:13px;font-weight:600">${escapeHtml(a.desc)}</div>
         <div style="font-size:11px;color:var(--text3)">SAP: ${escapeHtml(a.sap)}</div>
+        ${missing.length ? `<div style="font-size:11px;color:var(--danger);font-weight:600;margin-top:2px">⚠️ Non compatible ${missing.join(', ')}</div>` : ''}
       </div>
       <div class="qty-control">
         <button class="qty-btn" onclick="kitQtyChange(${i},-1)">−</button>
@@ -7822,6 +7857,63 @@ function kitRemoveArticle(idx) {
   kitArticlesData.splice(idx, 1);
   renderKitArticlesList();
 }
+// Imprime la liste des pièces du kit tel qu'il est EN COURS D'ÉDITION (pas
+// besoin d'avoir déjà enregistré) — pratique pour vérifier/valider la
+// composition d'un kit avant de le sauvegarder, indépendamment de toute
+// commande passée par un agent.
+function printKitDefinition() {
+  const nom = (document.getElementById('kit-nom').value || 'Kit sans nom').trim();
+  const desc = (document.getElementById('kit-desc').value || '').trim();
+  const kitStandard = isChk('kit-chk-standard');
+  const kitArticule = isChk('kit-chk-articule');
+  const busLabel = [kitStandard && 'Standard', kitArticule && 'Articulé'].filter(Boolean).join(' + ') || 'Non spécifié';
+
+  if(!kitArticlesData.length) {
+    showNotif('⚠️', 'Kit vide', 'Ajoutez au moins un article avant d\'imprimer la liste');
+    return;
+  }
+
+  const rows = kitArticlesData.map(ka => {
+    const a = DB.articles.find(x => x.id === ka.articleId);
+    if(!a) return '';
+    return `<tr>
+      <td>${escapeHtml(a.sap)}</td>
+      <td>${escapeHtml(a.desc)}</td>
+      <td style="text-align:center">${ka.qty}</td>
+      <td>${escapeHtml(getMagasinLabel(a.magasin))} — ${escapeHtml(a.emplacement)}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `
+    <html><head><title>${escapeHtml(nom)}</title>
+    <style>
+      body{font-family:Arial;padding:24px;color:#111}
+      h1{font-size:20px;color:#0B2545;margin-bottom:4px}
+      .meta{font-size:13px;color:#555;margin-bottom:18px}
+      table{width:100%;border-collapse:collapse;margin-top:10px}
+      th,td{border:1px solid #ccc;padding:8px;font-size:13px;text-align:left}
+      th{background:#0B2545;color:white}
+    </style></head>
+    <body>
+      <h1>📦 ${escapeHtml(nom)}</h1>
+      <div class="meta">
+        ${desc ? escapeHtml(desc) + '<br>' : ''}
+        Type de bus : <strong>${busLabel}</strong> — ${kitArticlesData.length} référence(s), ${kitArticlesData.reduce((s,ka)=>s+ka.qty,0)} pièce(s) au total
+      </div>
+      <table>
+        <thead><tr><th>SAP</th><th>Désignation</th><th>Qté</th><th>Emplacement</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </body></html>`;
+
+  const printWin = window.open('', '_blank');
+  if(printWin) {
+    printWin.document.write(html);
+    printWin.document.close();
+    printWin.print();
+  }
+}
+
 function saveKit() {
   const nom = document.getElementById('kit-nom').value.trim();
   if(!nom) { showNotif('⚠️','Champ manquant','Le nom du kit est obligatoire'); return; }
