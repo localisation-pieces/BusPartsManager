@@ -5327,9 +5327,8 @@ function renderCartView() {
         ${items.map((c,i) => {
           const a = DB.articles.find(x => x.id === c.id);
           if(!a) return '';
-          const incompatible = busInfo ? !isArticleCompatibleWithBusType(a, busInfo.type) : false;
           return `
-          <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;${i>0?'border-top:1px solid var(--border)':''}${incompatible?';background:var(--danger-light)':''}">
+          <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;${i>0?'border-top:1px solid var(--border)':''}">
             <div style="width:64px;height:64px;border-radius:10px;background:var(--surface2);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid var(--border)" ${a.photo?`onclick="openPhotoZoom('${a.photo}', event)" style="cursor:zoom-in"`:''}>
               ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_140,h_140,c_fill')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">` : '<span style="font-size:28px">⚙️</span>'}
             </div>
@@ -5339,7 +5338,6 @@ function renderCartView() {
               <select onchange="cartAssignBus('${c.id}', this.value)" style="font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;max-width:220px">
                 ${busOptionsHtml(c.bus || '')}
               </select>
-              ${incompatible ? `<div style="margin-top:6px;font-size:11.5px;color:var(--danger);font-weight:600">⚠️ Non compatible avec le bus ${busInfo.type==='articule'?'articulé':'standard'} assigné</div>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
               <div class="qty-control">
@@ -5406,16 +5404,6 @@ function cartApplyDefaultBus() {
   renderCartView();
 }
 
-function isArticleCompatibleWithBusType(article, busType) {
-  // Une pièce cochée "Standard" et "Articulé" est compatible avec les deux.
-  // Une pièce cochée uniquement "Standard" n'est compatible qu'avec un bus standard.
-  // Une pièce cochée uniquement "Articulé" n'est compatible qu'avec un bus articulé.
-  if(!busType) return true; // pas de bus sélectionné -> pas de blocage
-  if(busType === 'standard') return !!article.busStandard;
-  if(busType === 'articule') return !!article.busArticule;
-  return true;
-}
-
 function cartChangeQty(id, d) {
   const c = cart.find(x => x.id === id);
   if(c) { c.qty = Math.max(1, c.qty + d); }
@@ -5460,23 +5448,6 @@ function sendOrder() {
   const groups = {};
   cart.forEach(c => { (groups[c.bus] = groups[c.bus] || []).push(c); });
   const busNumeros = Object.keys(groups);
-
-  // Vérifier la compatibilité AVANT de créer quoi que ce soit — pour ne pas
-  // envoyer 2 commandes sur 3 puis planter sur la dernière.
-  for(const busNumero of busNumeros) {
-    const busInfo = busParc.find(b => b.numero === busNumero);
-    if(!busInfo) continue;
-    const incompatibles = groups[busNumero]
-      .map(c => DB.articles.find(x => x.id === c.id))
-      .filter(a => a && !isArticleCompatibleWithBusType(a, busInfo.type));
-    if(incompatibles.length) {
-      errEl.innerHTML = `⚠️ Impossible d'envoyer : ${incompatibles.length} pièce(s) ne sont pas compatibles avec le bus ${busInfo.type==='articule'?'articulé':'standard'} #${busNumero} : ` +
-        incompatibles.map(a => a.desc).join(', ') + `. Retire ces pièces ou change leur bus assigné.`;
-      errEl.style.display = 'block';
-      errEl.scrollIntoView({behavior:'smooth', block:'center'});
-      return;
-    }
-  }
 
   const comment = document.getElementById('cart-comment') ? sanitizeInput(document.getElementById('cart-comment').value) : '';
   const createdOrders = [];
