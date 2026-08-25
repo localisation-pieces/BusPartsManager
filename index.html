@@ -5299,9 +5299,14 @@ function renderCartView() {
   }
 
   const totalItems = cart.reduce((s,c) => s+c.qty, 0);
-  const busParc = DB.settings.busParc || [];
-  const busOptionsHtml = (selected) => `<option value="">— Non assigné —</option>` +
-    busParc.map(b => `<option value="${b.numero}" ${b.numero===selected?'selected':''}>#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})</option>`).join('');
+  // Triés numériquement — avec 75 bus et plus, une liste dans le désordre
+  // rendait la recherche pénible. Le champ de recherche ci-dessous permet
+  // en plus de filtrer directement par numéro ou par marque.
+  const busParc = [...(DB.settings.busParc || [])].sort((a,b) => parseInt(a.numero) - parseInt(b.numero));
+  const busLabel = (numero) => {
+    const b = busParc.find(x => x.numero === numero);
+    return b ? `#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})` : '';
+  };
 
   // Regroupe les articles par bus assigné — un agent qui travaille sur
   // plusieurs bus en même temps voit ainsi clairement quelle pièce va où,
@@ -5335,9 +5340,12 @@ function renderCartView() {
             <div style="flex:1;min-width:0">
               <div style="font-size:14px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}${c.fromKit?`<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--navy);color:white;margin-left:6px;vertical-align:middle">📦 ${escapeHtml(c.kitNom||'Kit')}</span>`:''}</div>
               <div style="font-size:12px;color:var(--text3);margin-bottom:6px">SAP: ${escapeHtml(a.sap)} · ${escapeHtml(a.fournisseur)||'—'} · 📍 ${escapeHtml(a.magasin)} ${escapeHtml(a.emplacement)}</div>
-              <select onchange="cartAssignBus('${c.id}', this.value)" style="font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;max-width:220px">
-                ${busOptionsHtml(c.bus || '')}
-              </select>
+              <div style="position:relative;max-width:240px">
+                <input type="text" id="cart-bus-input-${c.id}" class="bus-search-input" data-target="cart-bus-${c.id}-results" value="${c.bus ? escapeHtml(busLabel(c.bus)) : ''}" placeholder="🔍 Chercher un bus..." autocomplete="off"
+                  oninput="renderBusSearchResults('cart-bus-${c.id}', this.value, '${c.id}')" onfocus="renderBusSearchResults('cart-bus-${c.id}', this.value, '${c.id}')"
+                  style="width:100%;font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface);box-sizing:border-box">
+                <div id="cart-bus-${c.id}-results" class="bus-search-results-box" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:3px;background:var(--surface);border:1.5px solid var(--border);border-radius:6px;box-shadow:var(--shadow-lg);z-index:55;max-height:200px;overflow-y:auto"></div>
+              </div>
             </div>
             <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
               <div class="qty-control">
@@ -5362,10 +5370,13 @@ function renderCartView() {
       <div class="card" style="margin-bottom:20px;border:2px solid var(--primary-light)">
         <div class="section-title" style="margin-bottom:10px">🚌 Assigner un bus à tout le panier d'un coup</div>
         <div style="display:flex;gap:8px">
-          <select id="cart-bus-default" style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;font-weight:600;background:var(--surface);cursor:pointer">
-            <option value="">— Sélectionner —</option>
-            ${busParc.map(b=>`<option value="${b.numero}">#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})</option>`).join('')}
-          </select>
+          <div style="position:relative;flex:1">
+            <input type="text" id="cart-bus-default-input" class="bus-search-input" data-target="cart-bus-default-results" placeholder="🔍 Chercher un numéro de bus ou une marque..." autocomplete="off"
+              oninput="renderBusSearchResults('cart-bus-default', this.value)" onfocus="renderBusSearchResults('cart-bus-default', this.value)"
+              style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;font-weight:600;background:var(--surface);box-sizing:border-box">
+            <input type="hidden" id="cart-bus-default-value">
+            <div id="cart-bus-default-results" class="bus-search-results-box" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:60;max-height:240px;overflow-y:auto"></div>
+          </div>
           <button class="btn btn-outline btn-sm" onclick="cartApplyDefaultBus()">Appliquer à tout</button>
         </div>
         <p style="font-size:11.5px;color:var(--text3);margin-top:8px">Pratique si tout le panier est pour un seul bus. Si tu travailles sur plusieurs bus en même temps, assigne plutôt chaque article individuellement ci-dessous — l'envoi créera une commande séparée par bus.</p>
@@ -5397,11 +5408,57 @@ function cartAssignBus(id, busNumero) {
 }
 
 function cartApplyDefaultBus() {
-  const busNumero = document.getElementById('cart-bus-default').value;
+  const busNumero = document.getElementById('cart-bus-default-value').value;
   if(!busNumero) return;
   cart.forEach(c => { c.bus = busNumero; });
   saveCart();
   renderCartView();
+}
+
+// Champ de recherche rapide pour choisir un bus parmi ceux du parc (jusqu'à
+// plusieurs dizaines) — filtre par numéro ou par marque au fur et à mesure
+// de la frappe, plutôt qu'une longue liste déroulante à parcourir. Réutilisé
+// à la fois pour le sélecteur "tout le panier" et pour chaque article
+// individuellement (cartItemId absent dans le premier cas).
+function renderBusSearchResults(widgetId, query, cartItemId) {
+  const box = document.getElementById(widgetId + '-results');
+  if(!box) return;
+  const busParc = [...(DB.settings.busParc || [])].sort((a,b) => parseInt(a.numero) - parseInt(b.numero));
+  const q = (query || '').toLowerCase().trim();
+  const matches = q
+    ? busParc.filter(b => b.numero.includes(q) || (b.marque||'').toLowerCase().includes(q))
+    : busParc;
+
+  if(!matches.length) {
+    box.innerHTML = '<div style="padding:12px;text-align:center;font-size:12px;color:var(--text3)">Aucun bus trouvé</div>';
+    box.style.display = 'block';
+    return;
+  }
+
+  box.innerHTML = matches.slice(0, 50).map(b => `
+    <div onmousedown="event.preventDefault();selectBusFromSearch('${widgetId}', '${b.numero}'${cartItemId ? `, '${cartItemId}'` : ''})" style="padding:8px 12px;cursor:pointer;font-size:12.5px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+      <strong>#${b.numero}</strong> — ${escapeHtml(b.marque)} (${b.type==='articule'?'Articulé':'Standard'})
+    </div>`).join('');
+  box.style.display = 'block';
+}
+
+function selectBusFromSearch(widgetId, numero, cartItemId) {
+  const box = document.getElementById(widgetId + '-results');
+  if(box) box.style.display = 'none';
+
+  if(cartItemId) {
+    // Sélection pour un article précis du panier : applique tout de suite.
+    cartAssignBus(cartItemId, numero);
+  } else {
+    // Sélection pour le champ "tout le panier d'un coup" : ne fait
+    // qu'enregistrer le choix, l'application se fait via son bouton dédié.
+    const input = document.getElementById(widgetId + '-input');
+    const busParc = DB.settings.busParc || [];
+    const b = busParc.find(x => x.numero === numero);
+    if(input) input.value = b ? `#${b.numero} — ${b.marque} (${b.type==='articule'?'Articulé':'Standard'})` : '';
+    const hidden = document.getElementById(widgetId + '-value');
+    if(hidden) hidden.value = numero;
+  }
 }
 
 function cartChangeQty(id, d) {
@@ -8873,6 +8930,12 @@ document.addEventListener('click', e => {
   const kitBox = document.getElementById('kit-article-search-results');
   const kitInput = document.getElementById('kit-article-search');
   if(kitBox && !kitBox.contains(e.target) && e.target !== kitInput) kitBox.style.display = 'none';
+
+  document.querySelectorAll('.bus-search-results-box').forEach(box => {
+    if(box.style.display === 'none') return;
+    const targetInput = document.querySelector(`.bus-search-input[data-target="${box.id}"]`);
+    if(!box.contains(e.target) && e.target !== targetInput) box.style.display = 'none';
+  });
 });
 
 function showGlobalResults() {
