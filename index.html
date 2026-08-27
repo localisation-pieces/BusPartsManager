@@ -5053,9 +5053,18 @@ function chooseHotspotArticle(articleId) {
 // encore traité" et "déjà cherché, résultat négatif".
 function markHotspotNotFound() {
   if(pendingHotspotIndex === null) return;
+  // Une note libre permet de garder trace de ce que tu sais déjà (le repère
+  // du schéma d'origine, une description approximative...) sans avoir
+  // besoin de créer une fiche article complète tout de suite — tu pourras
+  // la créer plus tard, une fois le SAP connu, en te basant sur cette note.
+  const note = prompt(
+    'Note pour t\'aider à retrouver cette pièce plus tard (facultatif) — ex: le repère du schéma d\'origine, une description approximative...',
+    ''
+  );
+  if(note === null) return; // annulé
   schemaHotspots[pendingHotspotIndex].articleId = null;
   schemaHotspots[pendingHotspotIndex].notFound = true;
-  schemaHotspots[pendingHotspotIndex].label = 'Pièce introuvable dans le catalogue';
+  schemaHotspots[pendingHotspotIndex].label = note.trim() ? `Introuvable — ${note.trim()}` : 'Pièce introuvable dans le catalogue';
   pendingHotspotIndex = null;
   closeModal('modal-hotspot-picker');
   renderHotspotsOverlay('schema-editor-imgwrap', schemaHotspots, 'edit');
