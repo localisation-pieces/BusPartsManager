@@ -5094,6 +5094,31 @@ async function saveSchema() {
 
   if(schemaEditingId) {
     const idx = DB.schemas.findIndex(s => s.id === schemaEditingId);
+    const ancienneCategorie = idx >= 0 ? DB.schemas[idx].categorie : null;
+
+    // Si l'organe du schéma change, propose de répercuter le changement sur
+    // toutes les pièces déjà reliées — sinon le schéma dirait "Suspension"
+    // pendant que ses pièces restent classées "Freins", exactement le genre
+    // d'incohérence qu'on évite partout ailleurs dans l'appli.
+    if(idx >= 0 && ancienneCategorie && ancienneCategorie !== categorie) {
+      const linkedArticles = data.hotspots
+        .map(h => DB.articles.find(a => a.id === h.articleId))
+        .filter(a => a && (a.categorie === ancienneCategorie || (a.categoriesSecondaires||[]).includes(ancienneCategorie)));
+      if(linkedArticles.length) {
+        const appliquer = confirm(
+          `Ce schéma passe de l'organe "${ancienneCategorie}" à "${categorie}".\n\n` +
+          `${linkedArticles.length} pièce(s) reliée(s) sont actuellement classée(s) dans "${ancienneCategorie}" — veux-tu les reclasser en "${categorie}" aussi ?\n\n` +
+          `OK = reclasser ces pièces\nAnnuler = laisser leur catégorie telle quelle`
+        );
+        if(appliquer) {
+          linkedArticles.forEach(a => {
+            if(a.categorie === ancienneCategorie) a.categorie = categorie;
+            else a.categoriesSecondaires = a.categoriesSecondaires.map(c => c === ancienneCategorie ? categorie : c);
+          });
+        }
+      }
+    }
+
     if(idx >= 0) DB.schemas[idx] = { ...DB.schemas[idx], ...data };
   } else {
     data.id = 's' + Date.now() + Math.random().toString(36).slice(2,6);
