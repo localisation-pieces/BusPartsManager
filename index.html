@@ -1103,6 +1103,26 @@
             <button class="btn btn-outline" onclick="fixMissingMagasin()">📍 Corriger le magasin manquant (→ 2K – Pike)</button>
           </div>
         </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">🔗 Fusionner deux pièces en doublon</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Pour le cas d'une même pièce référencée sous deux SAP différents (ex: ancienne référence supprimée par SAP, remplacée par une nouvelle). Tout ce qui pointe vers la pièce à supprimer (schémas, kits, historique de commandes) est automatiquement basculé vers la pièce à garder, et son ancien SAP est ajouté comme mot-clé cherchable sur la fiche conservée.
+            </p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+              <div class="form-group" style="margin-bottom:0">
+                <label>SAP à garder</label>
+                <input type="text" id="merge-sap-keep" placeholder="ex: 69004028" inputmode="numeric">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label>SAP à supprimer (doublon)</label>
+                <input type="text" id="merge-sap-remove" placeholder="ex: 69000439" inputmode="numeric">
+              </div>
+            </div>
+            <button class="btn btn-outline" onclick="mergeDuplicateArticles()">🔗 Fusionner ces deux pièces</button>
+          </div>
+        </div>
       </div>
 
       <!-- PROFIL -->
@@ -7171,6 +7191,87 @@ function processDesignationFix(csvText) {
     filterArticles();
   }
   closeBtn.disabled = false;
+}
+
+// Fusionne deux fiches article qui représentent en réalité la MÊME pièce
+// (ex: ancienne référence SAP supprimée, remplacée par une nouvelle) — bien
+// différent d'un simple remplacement de SAP sur une fiche existante (dans ce
+// cas-là, il suffit de modifier le champ SAP directement, pas besoin de cet
+// outil). Ici, DEUX fiches distinctes existent réellement dans le
+// catalogue ; on migre tout ce qui pointe vers celle à supprimer (schémas,
+// kits, historique de commandes) vers celle à garder, avant de supprimer le
+// doublon. L'ancien SAP est ajouté comme mot-clé sur la fiche conservée pour
+// rester cherchable.
+function mergeDuplicateArticles() {
+  const sapKeep = document.getElementById('merge-sap-keep').value.replace(/[^0-9]/g, '');
+  const sapRemove = document.getElementById('merge-sap-remove').value.replace(/[^0-9]/g, '');
+
+  if(!sapKeep || !sapRemove) { alert('Merci de renseigner les deux références SAP.'); return; }
+  if(sapKeep === sapRemove) { alert('Les deux références SAP doivent être différentes.'); return; }
+
+  const articleKeep = DB.articles.find(a => a.sap === sapKeep);
+  const articleRemove = DB.articles.find(a => a.sap === sapRemove);
+  if(!articleKeep) { alert(`Aucune pièce trouvée avec le SAP ${sapKeep} (celle à garder).`); return; }
+  if(!articleRemove) { alert(`Aucune pièce trouvée avec le SAP ${sapRemove} (celle à supprimer) — rien à fusionner, ce SAP n'existe déjà plus dans le catalogue.`); return; }
+
+  // Compte l'ampleur AVANT de demander confirmation, pour que Hassan sache
+  // exactement ce qui va être touché.
+  let schemaCount = 0, kitCount = 0, orderCount = 0;
+  (DB.schemas || []).forEach(s => { if((s.hotspots||[]).some(h => h.articleId === articleRemove.id)) schemaCount++; });
+  (DB.kits || []).forEach(k => { if((k.articles||[]).some(ka => ka.articleId === articleRemove.id)) kitCount++; });
+  (DB.orders || []).forEach(o => { if((o.items||[]).some(it => it.articleId === articleRemove.id)) orderCount++; });
+
+  if(!confirm(
+    `Fusionner "${articleRemove.desc}" (SAP ${sapRemove}) dans "${articleKeep.desc}" (SAP ${sapKeep}) ?\n\n` +
+    `Seront mis à jour automatiquement :\n` +
+    `- ${schemaCount} schéma(s)\n- ${kitCount} kit(s)\n- ${orderCount} commande(s) de l'historique\n\n` +
+    `Le SAP ${sapRemove} sera ajouté comme mot-clé sur la fiche conservée, puis la fiche en doublon sera supprimée.\n\n` +
+    `Cette action ne peut pas être annulée depuis l'application. Continuer ?`
+  )) return;
+
+  // Schémas : chaque zone reliée à l'ancienne fiche pointe désormais vers la
+  // fiche conservée.
+  (DB.schemas || []).forEach(s => {
+    (s.hotspots || []).forEach(h => {
+      if(h.articleId === articleRemove.id) { h.articleId = articleKeep.id; h.label = articleKeep.desc; }
+    });
+  });
+
+  // Kits : si le kit contient DÉJÀ la fiche conservée, on fusionne les
+  // quantités au lieu de créer une ligne en double pour la même pièce.
+  (DB.kits || []).forEach(k => {
+    if(!k.articles) return;
+    const oldEntry = k.articles.find(ka => ka.articleId === articleRemove.id);
+    if(!oldEntry) return;
+    const existingEntry = k.articles.find(ka => ka.articleId === articleKeep.id);
+    if(existingEntry) {
+      existingEntry.qty += oldEntry.qty;
+      k.articles = k.articles.filter(ka => ka.articleId !== articleRemove.id);
+    } else {
+      oldEntry.articleId = articleKeep.id;
+    }
+  });
+
+  // Historique des commandes : conservé pour la traçabilité, mais pointant
+  // désormais vers la fiche existante (sinon un ancien BL deviendrait
+  // illisible, la pièce n'existant plus).
+  (DB.orders || []).forEach(o => {
+    (o.items || []).forEach(it => { if(it.articleId === articleRemove.id) it.articleId = articleKeep.id; });
+  });
+
+  // L'ancien SAP devient un mot-clé cherchable sur la fiche conservée — on
+  // récupère aussi les mots-clés déjà présents sur la fiche supprimée pour
+  // ne pas perdre du vocabulaire utile.
+  const extraKeywords = [sapRemove, articleRemove.keywords || ''].filter(Boolean).join(', ');
+  articleKeep.keywords = [articleKeep.keywords || '', extraKeywords].filter(Boolean).join(', ');
+
+  DB.articles = DB.articles.filter(a => a.id !== articleRemove.id);
+
+  save();
+  filterArticles();
+  document.getElementById('merge-sap-keep').value = '';
+  document.getElementById('merge-sap-remove').value = '';
+  showNotif('🔗', 'Fusion terminée', `${schemaCount} schéma(s), ${kitCount} kit(s), ${orderCount} commande(s) mis à jour · SAP ${sapRemove} ajouté en mot-clé sur ${sapKeep}`);
 }
 
 function fixMissingMagasin() {
