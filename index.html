@@ -4023,6 +4023,8 @@ function resetCatalogFilters() {
     if(el) el.value = '';
   });
   selectedCategoryFilters.clear();
+  const catSearch = document.getElementById('category-tiles-search');
+  if(catSearch) catSearch.value = '';
   const refInput = document.getElementById('filter-fournisseur-ref');
   if(refInput) refInput.value = '';
   filterArticles();
