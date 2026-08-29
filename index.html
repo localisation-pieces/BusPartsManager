@@ -5333,6 +5333,22 @@ function deleteArticle(id) {
   if(!confirm('Supprimer cette pièce ?')) return;
   const a = DB.articles.find(x => x.id === id);
   DB.articles = DB.articles.filter(a => a.id !== id);
+
+  // Nettoyage : sans ça, une pièce supprimée laisserait une zone "morte" sur
+  // les schémas où elle était reliée (cliquable pour rien), et fausserait le
+  // compte d'articles affiché sur les kits qui la contenaient.
+  let schemasTouched = 0, kitsTouched = 0;
+  (DB.schemas || []).forEach(s => {
+    const before = (s.hotspots || []).length;
+    s.hotspots = (s.hotspots || []).filter(h => h.articleId !== id);
+    if(s.hotspots.length !== before) schemasTouched++;
+  });
+  (DB.kits || []).forEach(k => {
+    const before = (k.articles || []).length;
+    k.articles = (k.articles || []).filter(ka => ka.articleId !== id);
+    if(k.articles.length !== before) kitsTouched++;
+  });
+
   save();
   if(a && window.fbReleaseSAP) window.fbReleaseSAP(a.sap); // libère la référence SAP, redevient disponible
   // Note : la photo éventuelle reste dans la médiathèque Cloudinary — la
@@ -5340,6 +5356,9 @@ function deleteArticle(id) {
   // exposer côté navigateur sans backend. Sans impact pratique vu le volume.
   closeModal('modal-article-detail');
   filterArticles();
+  if(schemasTouched > 0 || kitsTouched > 0) {
+    showNotif('🧹', 'Références nettoyées', `${schemasTouched} schéma(s) et ${kitsTouched} kit(s) mis à jour suite à la suppression`);
+  }
 }
 
 // =============================
@@ -7556,6 +7575,47 @@ function saveSetting() {
         });
         DB.settings.categories[editIdxNum] = newVal;
         if(touched > 0) showNotif('📂', 'Catégorie renommée', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
+      }
+    } else if(type === 'fournisseurs') {
+      // Même logique que les catégories : sinon le fournisseur renommé
+      // affiche 0 article dans le filtre, pendant que les fiches gardent
+      // l'ancien nom en silence.
+      const oldVal = DB.settings.fournisseurs[editIdxNum];
+      if(oldVal !== newVal) {
+        let touched = 0;
+        DB.articles.forEach(a => { if(a.fournisseur === oldVal) { a.fournisseur = newVal; touched++; } });
+        DB.settings.fournisseurs[editIdxNum] = newVal;
+        if(touched > 0) showNotif('🏭', 'Fournisseur renommé', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
+      }
+    } else if(type === 'marques') {
+      // a.marquesBus est un TABLEAU (une pièce peut être compatible avec
+      // plusieurs marques de bus) — remplacer l'ancienne valeur dans chaque
+      // tableau concerné, pas juste un champ simple.
+      const oldVal = DB.settings.marques[editIdxNum];
+      if(oldVal !== newVal) {
+        let touched = 0;
+        DB.articles.forEach(a => {
+          if(a.marquesBus && a.marquesBus.includes(oldVal)) {
+            a.marquesBus = a.marquesBus.map(m => m === oldVal ? newVal : m);
+            touched++;
+          }
+        });
+        DB.settings.marques[editIdxNum] = newVal;
+        if(touched > 0) showNotif('🚌', 'Marque renommée', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
+      }
+    } else if(type === 'magasins') {
+      // Le champ modifiable "code" (ex: "2K") est la vraie clé utilisée sur
+      // chaque fiche article (a.magasin) — si le code change, il faut
+      // suivre partout, sinon les pièces resteraient rattachées à un
+      // magasin qui n'existe plus dans la liste.
+      const oldCode = DB.settings.magasins[editIdxNum] ? DB.settings.magasins[editIdxNum].code : null;
+      if(oldCode && oldCode !== newVal.code) {
+        let touched = 0;
+        DB.articles.forEach(a => { if(a.magasin === oldCode) { a.magasin = newVal.code; touched++; } });
+        DB.settings.magasins[editIdxNum] = newVal;
+        if(touched > 0) showNotif('🏬', 'Magasin renommé', `${touched} pièce(s) mise(s) à jour (${oldCode} → ${newVal.code})`);
+      } else {
+        DB.settings.magasins[editIdxNum] = newVal;
       }
     } else {
       DB.settings[type][editIdxNum] = newVal;
