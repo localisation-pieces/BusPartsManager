@@ -185,6 +185,11 @@
     50% { box-shadow: 0 0 0 10px rgba(59,130,246,0); border-color: var(--amber-dark, #b45309); background: rgba(245,158,11,0.35); }
   }
   .schema-hotspot:hover { background: rgba(59,130,246,0.38); border-color: var(--primary-dark, var(--primary)); }
+  .reset-filters-flash { animation: resetFiltersFlash 1.4s ease-in-out infinite; }
+  @keyframes resetFiltersFlash {
+    0%, 100% { background: var(--surface); color: var(--text); border-color: var(--border); }
+    50% { background: var(--amber, #f59e0b); color: white; border-color: var(--amber-dark, #b45309); }
+  }
   .schema-hotspot-label { position: absolute; bottom: 100%; left: 0; background: var(--navy); color: white; font-size: 10.5px; font-weight: 600; padding: 2px 6px; border-radius: 4px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.1s; margin-bottom: 3px; }
   .schema-hotspot:hover .schema-hotspot-label { opacity: 1; }
   .schema-hotspot-editor { position: absolute; border: 2px dashed var(--danger); background: rgba(239,68,68,0.18); border-radius: 50%; cursor: pointer; }
@@ -779,7 +784,7 @@
               <option value="rotation-asc">🔄 Rotation (moins demandées en premier)</option>
               <option value="nom">Nom (A → Z)</option>
             </select>
-            <button class="btn btn-outline" id="reset-filters-btn" onclick="resetCatalogFilters()" style="display:none">✕ Réinitialiser les filtres</button>
+            <button class="btn btn-outline reset-filters-flash" id="reset-filters-btn" onclick="resetCatalogFilters()" style="display:none">✕ Réinitialiser les filtres</button>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-outline" onclick="openScanModal()" title="Scanner un code-barres ou QR code">📷 Scanner</button>
