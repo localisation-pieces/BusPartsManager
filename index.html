@@ -3211,7 +3211,10 @@ function applyRoleVisibility() {
 }
 
 function navGo(page) {
-  if(!hasPerm(page)) { showNotif('🚫','Accès refusé','Vous n\'avez pas accès à cette page'); return; }
+  // "schemas" suit la même permission que "catalog" (voir applyRoleVisibility)
+  // — pas de permission séparée à gérer sur chaque compte.
+  const permPage = page === 'schemas' ? 'catalog' : page;
+  if(!hasPerm(permPage)) { showNotif('🚫','Accès refusé','Vous n\'avez pas accès à cette page'); return; }
   showView(page);
 }
 
