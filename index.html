@@ -4784,6 +4784,36 @@ async function startBulkSchemaImport(fileList) {
   const files = Array.from(fileList || []);
   if(!files.length) return;
 
+  // Passe d'abord en revue tous les noms de fichiers pour repérer les
+  // organes qui n'existent pas encore dans la liste des catégories — plutôt
+  // que de les créer silencieusement (risque de recréer un doublon du genre
+  // "Freinage" vs "Freins" à cause d'une simple faute de frappe), on montre
+  // la liste et on demande confirmation avant de les ajouter.
+  const validCategories = DB.settings.categories || [];
+  const organesInconnus = [...new Set(
+    files.map(f => {
+      const nameWithoutExt = f.name.replace(/\.[^.]+$/, '');
+      const sepIdx = nameWithoutExt.indexOf(' - ');
+      return sepIdx === -1 ? null : nameWithoutExt.slice(0, sepIdx).trim();
+    }).filter(o => o && !validCategories.includes(o))
+  )];
+
+  let creerOrganes = false;
+  if(organesInconnus.length) {
+    creerOrganes = confirm(
+      `${organesInconnus.length} organe(s) non reconnu(s) dans les noms de fichiers :\n\n` +
+      organesInconnus.map(o => `- ${o}`).join('\n') +
+      `\n\nVérifie bien qu'il ne s'agit pas d'une faute de frappe (ex: "Freinage" au lieu de "Freins" qui existe déjà).\n\n` +
+      `OK = créer ces organes automatiquement et continuer l'import\n` +
+      `Annuler = ignorer les fichiers concernés (à corriger et réimporter plus tard)`
+    );
+    if(creerOrganes) {
+      DB.settings.categories.push(...organesInconnus);
+      save();
+      populateCategorieFilter();
+    }
+  }
+
   const bar = document.getElementById('bulk-schema-progress-bar');
   const text = document.getElementById('bulk-schema-progress-text');
   const log = document.getElementById('bulk-schema-log');
@@ -4801,7 +4831,7 @@ async function startBulkSchemaImport(fileList) {
     log.scrollTop = log.scrollHeight;
   }
 
-  const validCategories = DB.settings.categories || [];
+  const knownCategories = DB.settings.categories || [];
   let ok = 0, organeInconnu = 0, nomInvalide = 0, erreur = 0;
 
   for(let i = 0; i < files.length; i++) {
@@ -4823,7 +4853,7 @@ async function startBulkSchemaImport(fileList) {
       nomInvalide++;
       continue;
     }
-    if(!validCategories.includes(organe)) {
+    if(!knownCategories.includes(organe)) {
       addLog(`⚠️ ${file.name} — organe "${organe}" introuvable dans la liste des catégories (vérifie l'orthographe exacte)`, 'var(--amber-dark)');
       organeInconnu++;
       continue;
@@ -4848,6 +4878,7 @@ async function startBulkSchemaImport(fileList) {
   text.textContent = `Terminé : ${ok} schéma(s) créé(s), ${organeInconnu} organe(s) non reconnu(s), ${nomInvalide} nom(s) invalide(s), ${erreur} erreur(s).`;
   addLog('—————————————————', 'var(--text3)');
   addLog(`Résumé : ${ok} OK · ${organeInconnu} organe(s) inconnu(s) · ${nomInvalide} nom(s) invalide(s) · ${erreur} erreur(s)`, 'var(--text)');
+  if(creerOrganes) addLog(`Organe(s) créé(s) automatiquement : ${organesInconnus.join(', ')}`, 'var(--text2)');
   if(ok > 0) addLog('N\'oublie pas : chaque schéma importé n\'a encore aucune zone cliquable — ouvre-le pour les dessiner.', 'var(--text2)');
 
   if(ok > 0) {
