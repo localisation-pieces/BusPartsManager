@@ -1069,7 +1069,7 @@
             </p>
             <div style="background:var(--surface2);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px">
               <p style="font-size:12.5px;color:var(--text2);margin-bottom:10px">
-                <strong>Import en masse</strong> : sélectionne plusieurs images d'un coup, nommées <code>Organe - Titre.jpg</code> (ex: <code>Freins - Moyeux de roue.jpg</code>). Le nom avant le tiret doit correspondre exactement à un organe existant. Chaque schéma est créé sans zone cliquable — il te restera à les dessiner une par une ensuite.
+                <strong>Import en masse</strong> : sélectionne plusieurs images d'un coup, nommées <code>Organe - Titre.jpg</code> (ex: <code>Freins - Moyeux de roue.jpg</code>). Le nom avant le premier tiret doit correspondre exactement à un organe existant (sinon une confirmation te sera demandée pour le créer). Un 3e élément optionnel peut préciser le chemin dans le catalogue : <code>Organe - Titre - Chemin catalogue.jpg</code> (ex: <code>Freins - Moyeux de roue - Frein &gt; Tête de roue &gt; page 12.jpg</code>). Chaque schéma est créé sans zone cliquable — il te restera à les dessiner une par une ensuite.
               </p>
               <input type="file" id="bulk-schema-input" accept="image/*" multiple style="display:none" onchange="startBulkSchemaImport(this.files)">
               <button class="btn btn-outline" onclick="document.getElementById('bulk-schema-input').click()">📐 Importer des schémas en masse</button>
@@ -4840,14 +4840,20 @@ async function startBulkSchemaImport(fileList) {
     bar.style.width = Math.round((i / files.length) * 100) + '%';
 
     const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
-    const sepIdx = nameWithoutExt.indexOf(' - ');
-    if(sepIdx === -1) {
+    const firstSep = nameWithoutExt.indexOf(' - ');
+    if(firstSep === -1) {
       addLog(`❌ ${file.name} — nom invalide, séparateur " - " introuvable (attendu : "Organe - Titre.jpg")`, 'var(--danger)');
       nomInvalide++;
       continue;
     }
-    const organe = nameWithoutExt.slice(0, sepIdx).trim();
-    const titre = nameWithoutExt.slice(sepIdx + 3).trim();
+    const organe = nameWithoutExt.slice(0, firstSep).trim();
+    const reste = nameWithoutExt.slice(firstSep + 3);
+    // Un 2e tiret optionnel sépare le titre du chemin catalogue —
+    // "Organe - Titre - Chemin catalogue.jpg". S'il n'y en a qu'un, le
+    // chemin reste simplement vide (comportement identique à avant).
+    const secondSep = reste.indexOf(' - ');
+    const titre = (secondSep === -1 ? reste : reste.slice(0, secondSep)).trim();
+    const cheminCatalogue = secondSep === -1 ? '' : reste.slice(secondSep + 3).trim();
     if(!titre) {
       addLog(`❌ ${file.name} — titre manquant après le tiret`, 'var(--danger)');
       nomInvalide++;
@@ -4864,9 +4870,9 @@ async function startBulkSchemaImport(fileList) {
       if(!DB.schemas) DB.schemas = [];
       DB.schemas.push({
         id: 's' + Date.now() + Math.random().toString(36).slice(2,6),
-        titre, categorie: organe, image: url, hotspots: []
+        titre, categorie: organe, image: url, cheminCatalogue, hotspots: []
       });
-      addLog(`✅ ${file.name} → "${titre}" (${organe})`, 'var(--primary)');
+      addLog(`✅ ${file.name} → "${titre}" (${organe})${cheminCatalogue ? ` · 📂 ${cheminCatalogue}` : ''}`, 'var(--primary)');
       ok++;
     } catch(e) {
       addLog(`❌ ${file.name} — échec de l'envoi : ${e.message}`, 'var(--danger)');
