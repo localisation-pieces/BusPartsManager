@@ -573,6 +573,9 @@
         <span class="icon">🔧</span> Catalogue pièces
         <span class="nav-badge" id="catalog-count-badge" style="background:var(--border);color:var(--text2)">0</span>
       </div>
+      <div class="nav-item" onclick="navGo('schemas')" id="nav-schemas" style="display:none">
+        <span class="icon">📐</span> Schémas
+      </div>
       <div class="nav-item" onclick="navGo('tools')" id="nav-tools" style="display:none">
         <span class="icon">🛠️</span> Outillage
       </div>
@@ -737,6 +740,13 @@
             <div id="top-magasins-list"><div class="empty-state"><p>Pas encore de données</p></div></div>
           </div>
         </div>
+      </div>
+
+      <!-- SCHEMAS (organe par organe, recherche rapide) -->
+      <div class="view" id="view-schemas">
+        <div id="schemas-category-tiles-row" style="display:flex;gap:6px;overflow-x:auto;padding:2px 2px 10px;-webkit-overflow-scrolling:touch"></div>
+        <input type="text" id="schemas-page-search" placeholder="🔍 Chercher un organe ou un schéma..." oninput="renderSchemasPage()" style="width:100%;max-width:340px;margin-bottom:16px;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);box-sizing:border-box">
+        <div id="schemas-page-list"></div>
       </div>
 
       <!-- CATALOG -->
@@ -3178,6 +3188,11 @@ function applyRoleVisibility() {
     const el = document.getElementById('nav-' + page);
     if(el) el.style.display = hasPerm(page) ? '' : 'none';
   });
+  // Les schémas suivent le même accès que le catalogue — pas de permission
+  // séparée à gérer (sinon il faudrait la rajouter manuellement sur les 47
+  // comptes existants pour qu'ils la voient).
+  const navSchemas = document.getElementById('nav-schemas');
+  if(navSchemas) navSchemas.style.display = hasPerm('catalog') ? '' : 'none';
   // Magasinier section label
   const magSection = document.getElementById('nav-section-mag');
   if(magSection) magSection.style.display = (hasPerm('orders') || hasPerm('deliveries') || hasPerm('loansmgr') || hasPerm('journal')) ? '' : 'none';
@@ -3283,12 +3298,14 @@ function showView(name) {
     dashboard:'Tableau de bord', catalog:'Catalogue pièces', myorders:'Mes demandes',
     kits:'Kits de maintenance', tools:'Outillage', myloans:'Mes prêts outillage', loansmgr:'Gestion prêts outillage',
     orders:'Commandes à traiter', deliveries:'Prêt à livrer', journal:'Journal de préparation',
-    notifications:'Notifications', messages:'Messagerie', profile:'Mon profil', admin:'Administration', settings:'Paramètres'
+    notifications:'Notifications', messages:'Messagerie', profile:'Mon profil', admin:'Administration', settings:'Paramètres',
+    schemas:'📐 Schémas'
   };
   document.getElementById('page-title').textContent = titles[name] || name;
   updateBottomNavActive(name);
   closeMobileMenu();
   if(name === 'catalog') renderCatalog();
+  if(name === 'schemas') renderSchemasPage();
   if(name === 'kits') renderKits();
   if(name === 'tools') renderTools();
   if(name === 'myloans') renderMyLoans();
@@ -3670,12 +3687,14 @@ function renderCategoryTiles() {
 
 // Clique sur "Toutes" -> vide la sélection. Clique sur un organe -> l'ajoute
 // ou le retire de la sélection (plusieurs tuiles peuvent rester actives en
-// même temps), pour voir plusieurs organes d'un coup dans le catalogue.
+// même temps). Partagée entre le Catalogue et la page Schémas — sélectionner
+// un organe reste cohérent en passant de l'un à l'autre.
 function selectCategoryTile(c) {
   if(!c) { selectedCategoryFilters.clear(); }
   else if(selectedCategoryFilters.has(c)) { selectedCategoryFilters.delete(c); }
   else { selectedCategoryFilters.add(c); }
-  filterArticles();
+  if(currentView === 'schemas') renderSchemasPage();
+  else filterArticles();
 }
 
 // Petit lien sous les tuiles d'organe, visible uniquement quand UN SEUL
@@ -6270,6 +6289,102 @@ const PAGE_LABELS = {
   admin: '⚙️ Administration',
   settings: '🗂️ Paramètres'
 };
+
+// Version "publique" de la liste des schémas (accessible à tous, pas
+// seulement en Administration) — avec en plus un champ de recherche, vu que
+// ça devient le point d'entrée principal pour beaucoup de recherches de
+// pièces plutôt qu'une fonctionnalité secondaire.
+// Tuiles d'organe pour la page Schémas — même principe multi-sélection que
+// le catalogue, mais le chiffre affiché est le nombre de SCHÉMAS par organe
+// (pas le nombre de pièces).
+function renderSchemaCategoryTiles() {
+  const row = document.getElementById('schemas-category-tiles-row');
+  if(!row) return;
+  const categories = (DB.settings && DB.settings.categories) || [];
+  const schemas = DB.schemas || [];
+  const counts = {};
+  schemas.forEach(s => { counts[s.categorie] = (counts[s.categorie]||0) + 1; });
+
+  const searchInput = document.getElementById('schemas-page-search');
+  const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+  const visibleCategories = q
+    ? categories.filter(c => selectedCategoryFilters.has(c) || c.toLowerCase().includes(q))
+    : categories;
+
+  const allTile = `
+    <div class="category-tile ${selectedCategoryFilters.size === 0 ? 'active' : ''}" onclick="selectCategoryTile('')">
+      <span class="cat-icon">🗂️</span>
+      <span class="cat-label">Toutes</span>
+      <span class="cat-count">${schemas.length}</span>
+    </div>`;
+
+  row.innerHTML = allTile + visibleCategories.map(c => `
+    <div class="category-tile ${selectedCategoryFilters.has(c) ? 'active' : ''}" onclick="selectCategoryTile('${c.replace(/'/g,"\\'")}')">
+      <span class="cat-icon">${categoryIcon(c)}</span>
+      <span class="cat-label">${escapeHtml(c)}</span>
+      <span class="cat-count">${counts[c] || 0}</span>
+    </div>`).join('');
+}
+
+function renderSchemasPage() {
+  renderSchemaCategoryTiles();
+  const container = document.getElementById('schemas-page-list');
+  if(!container) return;
+  const schemas = DB.schemas || [];
+  if(!schemas.length) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📐</div><p>Aucun schéma créé pour le moment.</p></div>';
+    return;
+  }
+
+  const searchInput = document.getElementById('schemas-page-search');
+  const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+  const isStaff = currentUser && (currentUser.role === 'admin' || currentUser.role === 'magasinier');
+
+  const knownCategories = DB.settings.categories || [];
+  const byOrgane = {};
+  schemas.forEach(s => { (byOrgane[s.categorie] = byOrgane[s.categorie] || []).push(s); });
+  let orderedKeys = [
+    ...knownCategories.filter(c => byOrgane[c]),
+    ...Object.keys(byOrgane).filter(c => !knownCategories.includes(c))
+  ];
+
+  // La sélection des tuiles d'organe restreint d'abord la liste (logique
+  // "ou" comme sur le catalogue), puis la recherche texte affine par nom
+  // d'organe ou par titre de schéma.
+  if(selectedCategoryFilters.size) {
+    orderedKeys = orderedKeys.filter(organe => selectedCategoryFilters.has(organe));
+  }
+  if(q) {
+    orderedKeys = orderedKeys.filter(organe =>
+      organe.toLowerCase().includes(q) || byOrgane[organe].some(s => s.titre.toLowerCase().includes(q))
+    );
+  }
+
+  if(!orderedKeys.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Aucun schéma ne correspond${q ? ` à "${escapeHtml(q)}"` : ' à cette sélection'}</p></div>`;
+    return;
+  }
+
+  container.innerHTML = orderedKeys.map(organe => {
+    const items = q
+      ? byOrgane[organe].filter(s => organe.toLowerCase().includes(q) || s.titre.toLowerCase().includes(q))
+      : byOrgane[organe];
+    return `
+    <div style="margin-bottom:22px">
+      <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px">
+        ${categoryIcon(organe)} ${escapeHtml(organe)}
+        <span style="font-weight:400;color:var(--text3)">(${items.length})</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+        ${items.map(s => `
+          <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')">
+            <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+            <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(isStaff && (s.hotspots||[]).filter(h=>h.notFound).length) ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
 
 function renderAdminSchemaList() {
   const container = document.getElementById('admin-schema-list');
