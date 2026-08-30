@@ -5347,6 +5347,29 @@ async function saveArticle() {
     photo: currentPhotoUrl
   };
 
+  // Symétrique du contrôle déjà fait côté schéma (quand on relie une pièce
+  // à une zone d'un autre organe) : si on modifie DIRECTEMENT la catégorie
+  // d'une pièce déjà reliée à un schéma, et que l'organe de ce schéma ne
+  // fait plus partie des catégories (principale ou secondaires) de la pièce
+  // après la modification, on propose de le rajouter en secondaire plutôt
+  // que de laisser une incohérence silencieuse.
+  if(editingArticleId) {
+    const linkedSchemas = (DB.schemas || []).filter(s => (s.hotspots||[]).some(h => h.articleId === editingArticleId));
+    const nouvellesCategories = [data.categorie, ...(data.categoriesSecondaires||[])].filter(Boolean);
+    const organesPerdus = [...new Set(linkedSchemas.map(s => s.categorie))].filter(c => !nouvellesCategories.includes(c));
+    if(organesPerdus.length) {
+      const ajouter = confirm(
+        `⚠️ Cette pièce est reliée à un schéma de l'organe "${organesPerdus.join(', ')}", ` +
+        `mais ${organesPerdus.length>1?'ces organes ne font':'cet organe ne fait'} plus partie de ses catégories après cette modification.\n\n` +
+        `Voulez-vous ${organesPerdus.length>1?'les':'le'} rajouter en catégorie secondaire pour rester cohérent avec le schéma ?\n\n` +
+        `OK = rajouter\nAnnuler = laisser tel quel (le schéma restera relié quand même)`
+      );
+      if(ajouter) {
+        data.categoriesSecondaires = [...new Set([...(data.categoriesSecondaires||[]), ...organesPerdus])];
+      }
+    }
+  }
+
   if(pendingPhotoBlob) {
     if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Envoi de la photo…'; }
     try {
