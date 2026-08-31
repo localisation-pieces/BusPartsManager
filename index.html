@@ -196,8 +196,11 @@
   .schema-hotspot-editor .hs-del { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; background: var(--danger); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; cursor: pointer; }
   .schema-hotspot-editor.schema-hotspot-notfound { border-color: var(--amber); background: rgba(245,158,11,0.22); }
   .schema-hotspot-editor.schema-hotspot-notfound .hs-mark { position: absolute; top: -10px; left: -10px; width: 20px; height: 20px; background: var(--amber-dark, #b45309); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; pointer-events: none; }
-  .schema-thumb-card { border: 1.5px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; background: var(--surface); transition: box-shadow .15s, transform .15s; }
+  .schema-thumb-card { position: relative; border: 1.5px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; cursor: pointer; background: var(--surface); transition: box-shadow .15s, transform .15s; }
   .schema-thumb-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+  .schema-thumb-move { position: absolute; top: 6px; right: 6px; display: flex; gap: 3px; z-index: 5; }
+  .schema-thumb-move button { width: 22px; height: 22px; border: none; border-radius: 50%; background: rgba(0,0,0,0.55); color: white; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .schema-thumb-move button:disabled { opacity: 0.35; cursor: default; }
   .schema-thumb-card img { width: 100%; height: 190px; object-fit: contain; background: var(--surface2); display: block; padding: 6px; box-sizing: border-box; }
   .schema-thumb-card .schema-thumb-title { font-size: 13px; font-weight: 600; padding: 10px; line-height: 1.35; }
   .article-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
@@ -3733,8 +3736,12 @@ function openSchemaList(categorie) {
   if(!schemas.length) {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>Aucun schéma pour cet organe pour le moment.</p></div>';
   } else {
-    grid.innerHTML = schemas.map(s => `
+    grid.innerHTML = schemas.map((s,i) => `
       <div class="schema-thumb-card" onclick="closeModal('modal-schema-list');openSchemaViewer('${s.id}')" onmouseenter="showSchemaHoverPreview('${cloudinaryOptimized(s.image,'w_900')}', this)" onmouseleave="hideSchemaHoverPreview()">
+        <div class="schema-thumb-move staff-only" onclick="event.stopPropagation()">
+          <button onclick="moveSchemaItem('${s.id}',-1)" ${i===0?'disabled':''} title="Déplacer avant">◀</button>
+          <button onclick="moveSchemaItem('${s.id}',1)" ${i===schemas.length-1?'disabled':''} title="Déplacer après">▶</button>
+        </div>
         <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
         <div class="schema-thumb-title">${escapeHtml(s.titre)}</div>
       </div>`).join('');
@@ -6500,11 +6507,15 @@ function renderSchemasPage() {
         <span style="font-weight:400;color:var(--text3)">(${items.length})</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
-        ${items.map(s => `
+        ${items.map(s => { const groupPos = byOrgane[organe].findIndex(x => x.id === s.id); return `
           <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')" onmouseenter="showSchemaHoverPreview('${cloudinaryOptimized(s.image,'w_900')}', this)" onmouseleave="hideSchemaHoverPreview()">
+            <div class="schema-thumb-move staff-only" onclick="event.stopPropagation()">
+              <button onclick="moveSchemaItem('${s.id}',-1)" ${groupPos===0?'disabled':''} title="Déplacer avant">◀</button>
+              <button onclick="moveSchemaItem('${s.id}',1)" ${groupPos===byOrgane[organe].length-1?'disabled':''} title="Déplacer après">▶</button>
+            </div>
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
             <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(isStaff && (s.hotspots||[]).filter(h=>h.notFound).length) ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
-          </div>`).join('')}
+          </div>`; }).join('')}
       </div>
     </div>`;
   }).join('');
@@ -6539,8 +6550,12 @@ function renderAdminSchemaList() {
         <span style="font-weight:400;color:var(--text3)">(${byOrgane[organe].length})</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
-        ${byOrgane[organe].map(s => `
+        ${byOrgane[organe].map((s,i) => `
           <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')" onmouseenter="showSchemaHoverPreview('${cloudinaryOptimized(s.image,'w_900')}', this)" onmouseleave="hideSchemaHoverPreview()">
+            <div class="schema-thumb-move" onclick="event.stopPropagation()">
+              <button onclick="moveSchemaItem('${s.id}',-1)" ${i===0?'disabled':''} title="Déplacer avant">◀</button>
+              <button onclick="moveSchemaItem('${s.id}',1)" ${i===byOrgane[organe].length-1?'disabled':''} title="Déplacer après">▶</button>
+            </div>
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
             <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`).join('')}
@@ -7686,6 +7701,28 @@ function renderSettingList(type, renderFn) {
 // L'ordre de cette liste pilote directement l'ordre des tuiles d'organe
 // dans le catalogue — pas besoin de glisser-déposer, juste ▲▼, ça reste
 // fiable sur tous les appareils (tactile compris).
+// Réordonne les schémas d'un MÊME organe entre eux — l'ordre affiché suit
+// toujours l'ordre réel dans DB.schemas, donc on échange directement la
+// position des deux schémas concernés dans le tableau global (peu importe
+// que d'autres schémas d'organes différents soient intercalés entre eux).
+function moveSchemaItem(schemaId, direction) {
+  const schema = DB.schemas.find(s => s.id === schemaId);
+  if(!schema) return;
+  const sameOrgane = DB.schemas.filter(s => s.categorie === schema.categorie);
+  const posInGroup = sameOrgane.findIndex(s => s.id === schemaId);
+  const newPosInGroup = posInGroup + direction;
+  if(newPosInGroup < 0 || newPosInGroup >= sameOrgane.length) return;
+  const otherSchema = sameOrgane[newPosInGroup];
+  const idxA = DB.schemas.findIndex(s => s.id === schema.id);
+  const idxB = DB.schemas.findIndex(s => s.id === otherSchema.id);
+  [DB.schemas[idxA], DB.schemas[idxB]] = [DB.schemas[idxB], DB.schemas[idxA]];
+  save();
+  if(currentView === 'schemas') renderSchemasPage();
+  renderAdminSchemaList();
+  const listModal = document.getElementById('modal-schema-list');
+  if(listModal && listModal.classList.contains('open')) openSchemaList(schema.categorie);
+}
+
 function moveCategoryItem(index, direction) {
   const items = DB.settings.categories;
   const newIndex = index + direction;
