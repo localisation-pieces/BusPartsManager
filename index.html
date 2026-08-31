@@ -1732,6 +1732,13 @@
 </div>
 
 <!-- SCHEMA VIEWER MODAL — image avec zones cliquables renvoyant vers la fiche article -->
+<!-- Aperçu flottant au survol d'une vignette de schéma (desktop uniquement,
+     le tactile n'a pas de "survol" — le clic classique reste la façon
+     d'ouvrir en grand sur mobile/tablette) -->
+<div id="schema-hover-preview" style="display:none;position:fixed;z-index:2000;pointer-events:none;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);padding:8px">
+  <img src="" style="display:block;max-width:420px;max-height:420px;width:auto;height:auto;border-radius:8px">
+</div>
+
 <div class="modal-overlay" id="modal-schema-viewer">
   <div class="modal" style="width:min(900px,94vw)">
     <div class="modal-header">
@@ -3727,7 +3734,7 @@ function openSchemaList(categorie) {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>Aucun schéma pour cet organe pour le moment.</p></div>';
   } else {
     grid.innerHTML = schemas.map(s => `
-      <div class="schema-thumb-card" onclick="closeModal('modal-schema-list');openSchemaViewer('${s.id}')">
+      <div class="schema-thumb-card" onclick="closeModal('modal-schema-list');openSchemaViewer('${s.id}')" onmouseenter="showSchemaHoverPreview('${cloudinaryOptimized(s.image,'w_900')}', this)" onmouseleave="hideSchemaHoverPreview()">
         <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
         <div class="schema-thumb-title">${escapeHtml(s.titre)}</div>
       </div>`).join('');
@@ -6419,6 +6426,30 @@ function renderSchemaCategoryTiles() {
     </div>`).join('');
 }
 
+// Aperçu flottant en grand au survol d'une vignette de schéma — positionné
+// à côté de la carte (jamais coupé, contrairement à un zoom sur place dans
+// une case déjà petite), et toujours gardé dans l'écran visible.
+function showSchemaHoverPreview(imgSrc, cardEl) {
+  const preview = document.getElementById('schema-hover-preview');
+  if(!preview) return;
+  preview.querySelector('img').src = imgSrc;
+  preview.style.display = 'block';
+  const rect = cardEl.getBoundingClientRect();
+  const previewRect = preview.getBoundingClientRect();
+  let left = rect.right + 12;
+  if(left + previewRect.width > window.innerWidth) left = rect.left - previewRect.width - 12;
+  if(left < 8) left = Math.max(8, (window.innerWidth - previewRect.width) / 2);
+  let top = rect.top;
+  if(top + previewRect.height > window.innerHeight - 8) top = window.innerHeight - previewRect.height - 8;
+  if(top < 8) top = 8;
+  preview.style.left = left + 'px';
+  preview.style.top = top + 'px';
+}
+function hideSchemaHoverPreview() {
+  const preview = document.getElementById('schema-hover-preview');
+  if(preview) preview.style.display = 'none';
+}
+
 function renderSchemasPage() {
   renderSchemaCategoryTiles();
   const container = document.getElementById('schemas-page-list');
@@ -6470,7 +6501,7 @@ function renderSchemasPage() {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
         ${items.map(s => `
-          <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')">
+          <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')" onmouseenter="showSchemaHoverPreview('${cloudinaryOptimized(s.image,'w_900')}', this)" onmouseleave="hideSchemaHoverPreview()">
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
             <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(isStaff && (s.hotspots||[]).filter(h=>h.notFound).length) ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`).join('')}
@@ -6509,7 +6540,7 @@ function renderAdminSchemaList() {
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
         ${byOrgane[organe].map(s => `
-          <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')">
+          <div class="schema-thumb-card" onclick="openSchemaViewer('${s.id}')" onmouseenter="showSchemaHoverPreview('${cloudinaryOptimized(s.image,'w_900')}', this)" onmouseleave="hideSchemaHoverPreview()">
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
             <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`).join('')}
