@@ -4832,7 +4832,7 @@ async function startBulkSchemaImport(fileList) {
   }
 
   const knownCategories = DB.settings.categories || [];
-  let ok = 0, organeInconnu = 0, nomInvalide = 0, erreur = 0;
+  let ok = 0, organeInconnu = 0, nomInvalide = 0, erreur = 0, doublon = 0;
 
   for(let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -4864,6 +4864,15 @@ async function startBulkSchemaImport(fileList) {
       organeInconnu++;
       continue;
     }
+    // Un schéma du même titre existe déjà pour ce même organe — probablement
+    // le même fichier importé deux fois par erreur, ou un titre réutilisé
+    // sans s'en rendre compte. On l'ignore plutôt que de créer un doublon
+    // silencieux, sans gaspiller d'envoi Cloudinary pour rien.
+    if((DB.schemas || []).some(s => s.categorie === organe && s.titre.toLowerCase() === titre.toLowerCase())) {
+      addLog(`⏭️ ${file.name} — un schéma "${titre}" existe déjà pour l'organe "${organe}", ignoré (doublon)`, 'var(--text3)');
+      doublon++;
+      continue;
+    }
     try {
       const blob = await compressImageToBlob(file, 1600, 0.85);
       const url = await uploadPhotoToCloudinary('schema_' + Date.now(), blob);
@@ -4881,9 +4890,9 @@ async function startBulkSchemaImport(fileList) {
   }
 
   bar.style.width = '100%';
-  text.textContent = `Terminé : ${ok} schéma(s) créé(s), ${organeInconnu} organe(s) non reconnu(s), ${nomInvalide} nom(s) invalide(s), ${erreur} erreur(s).`;
+  text.textContent = `Terminé : ${ok} schéma(s) créé(s), ${doublon} doublon(s) ignoré(s), ${organeInconnu} organe(s) non reconnu(s), ${nomInvalide} nom(s) invalide(s), ${erreur} erreur(s).`;
   addLog('—————————————————', 'var(--text3)');
-  addLog(`Résumé : ${ok} OK · ${organeInconnu} organe(s) inconnu(s) · ${nomInvalide} nom(s) invalide(s) · ${erreur} erreur(s)`, 'var(--text)');
+  addLog(`Résumé : ${ok} OK · ${doublon} doublon(s) ignoré(s) · ${organeInconnu} organe(s) inconnu(s) · ${nomInvalide} nom(s) invalide(s) · ${erreur} erreur(s)`, 'var(--text)');
   if(creerOrganes) addLog(`Organe(s) créé(s) automatiquement : ${organesInconnus.join(', ')}`, 'var(--text2)');
   if(ok > 0) addLog('N\'oublie pas : chaque schéma importé n\'a encore aucune zone cliquable — ouvre-le pour les dessiner.', 'var(--text2)');
 
@@ -5182,6 +5191,14 @@ async function saveSchema() {
   const categorie = document.getElementById('schema-categorie').value;
   if(!titre) { alert('Merci de donner un titre au schéma.'); return; }
   if(!schemaPendingImageBlob && !schemaCurrentImageUrl) { alert('Merci d\'ajouter une image de schéma.'); return; }
+
+  // Uniquement pour un NOUVEAU schéma (pas en modification d'un existant) —
+  // avertit si un schéma du même titre existe déjà pour cet organe, sans
+  // bloquer (peut arriver légitimement, ex: deux vues très proches).
+  if(!schemaEditingId) {
+    const doublonExistant = (DB.schemas || []).some(s => s.categorie === categorie && s.titre.toLowerCase() === titre.toLowerCase());
+    if(doublonExistant && !confirm(`⚠️ Un schéma "${titre}" existe déjà pour l'organe "${categorie}".\n\nCréer quand même celui-ci en plus ?`)) return;
+  }
 
   const saveBtn = document.getElementById('schema-save-btn');
   let imageUrl = schemaCurrentImageUrl;
