@@ -5042,7 +5042,7 @@ let schemaHotspots = [];
 function openSchemaEditor(schemaId, defaultCategorie) {
   schemaEditingId = schemaId;
   const catSel = document.getElementById('schema-categorie');
-  catSel.innerHTML = (DB.settings.categories || []).map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  catSel.innerHTML = '<option value="">— Choisir un organe —</option>' + (DB.settings.categories || []).map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
 
   const s = schemaId ? (DB.schemas || []).find(x => x.id === schemaId) : null;
   document.getElementById('schema-editor-title').textContent = s ? '📐 Modifier le schéma' : '📐 Nouveau schéma';
@@ -5319,6 +5319,7 @@ async function saveSchema() {
   const titre = sanitizeInput(document.getElementById('schema-titre').value);
   const categorie = document.getElementById('schema-categorie').value;
   if(!titre) { alert('Merci de donner un titre au schéma.'); return; }
+  if(!categorie) { alert('Merci de choisir un organe.'); document.getElementById('schema-categorie').focus(); return; }
   if(!schemaPendingImageBlob && !schemaCurrentImageUrl) { alert('Merci d\'ajouter une image de schéma.'); return; }
 
   // Uniquement pour un NOUVEAU schéma (pas en modification d'un existant) —
