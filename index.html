@@ -1806,7 +1806,7 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline" style="background:var(--danger-light);color:var(--danger);border:1px solid var(--danger)" id="schema-delete-btn" onclick="deleteCurrentSchema()">🗑️ Supprimer ce schéma</button>
+      <button class="btn btn-outline staff-only" style="background:var(--danger-light);color:var(--danger);border:1px solid var(--danger)" id="schema-delete-btn" onclick="deleteCurrentSchema()">🗑️ Supprimer ce schéma</button>
       <button class="btn btn-outline" onclick="closeModal('modal-schema-editor')">Annuler</button>
       <button class="btn btn-primary" id="schema-save-btn" onclick="saveSchema()">Enregistrer</button>
     </div>
@@ -4969,7 +4969,8 @@ function openSchemaEditor(schemaId, defaultCategorie) {
   const lbl = document.getElementById('schema-upload-label-text');
   const body = document.getElementById('schema-editor-body');
   const img = document.getElementById('schema-editor-img');
-  document.getElementById('schema-delete-btn').style.display = s ? 'inline-flex' : 'none';
+  const isStaffUser = currentUser && (currentUser.role === 'admin' || currentUser.role === 'magasinier');
+  document.getElementById('schema-delete-btn').style.display = (s && isStaffUser) ? 'inline-flex' : 'none';
 
   if(schemaCurrentImageUrl) {
     lbl.textContent = '📐 Changer l\'image du schéma';
