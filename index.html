@@ -3210,10 +3210,7 @@ function applyRoleVisibility() {
   // Magasinier section label
   const magSection = document.getElementById('nav-section-mag');
   if(magSection) magSection.style.display = (hasPerm('orders') || hasPerm('deliveries') || hasPerm('loansmgr') || hasPerm('journal')) ? '' : 'none';
-  // Catalog add button: only admin/magasinier
-  document.querySelectorAll('.admin-only').forEach(el => el.style.display = role === 'admin' ? '' : 'none');
-  document.querySelectorAll('.magasinier-only').forEach(el => el.style.display = role === 'magasinier' ? '' : 'none');
-  document.querySelectorAll('.staff-only').forEach(el => el.style.display = (role === 'admin' || role === 'magasinier') ? '' : 'none');
+  sweepRoleOnlyElements();
   document.getElementById('cart-btn').style.display = '';
   // Bottom nav (mobile)
   const bnCommandes = document.getElementById('bn-commandes');
@@ -3223,6 +3220,32 @@ function applyRoleVisibility() {
   const bnDeliveries = document.getElementById('bn-deliveries');
   if(bnDeliveries) bnDeliveries.style.display = hasPerm('deliveries') ? '' : 'none';
 }
+
+// Applique le masquage par rôle (.admin-only / .magasinier-only /
+// .staff-only) à TOUS les éléments présents à cet instant dans la page.
+function sweepRoleOnlyElements() {
+  if(!currentUser) return;
+  const role = currentUser.role;
+  document.querySelectorAll('.admin-only').forEach(el => el.style.display = role === 'admin' ? '' : 'none');
+  document.querySelectorAll('.magasinier-only').forEach(el => el.style.display = role === 'magasinier' ? '' : 'none');
+  document.querySelectorAll('.staff-only').forEach(el => el.style.display = (role === 'admin' || role === 'magasinier') ? '' : 'none');
+}
+
+// Correctif important : applyRoleVisibility() ne s'exécutait QU'UNE FOIS, à
+// la connexion — avant même que la plupart des contenus dynamiques
+// (schémas, boutons générés via innerHTML dans les pages...) n'existent
+// dans la page. Résultat : un élément staff-only créé APRÈS coup n'était
+// jamais caché pour un agent (bug confirmé sur les flèches de réorganisation
+// des schémas, probablement présent ailleurs aussi). Cet observateur
+// surveille en continu tout ajout de contenu à l'écran et réapplique
+// automatiquement le masquage par rôle, sans avoir à se souvenir de le
+// refaire manuellement dans chaque fonction d'affichage.
+let roleSweepScheduled = false;
+new MutationObserver(() => {
+  if(roleSweepScheduled || !currentUser) return;
+  roleSweepScheduled = true;
+  requestAnimationFrame(() => { sweepRoleOnlyElements(); roleSweepScheduled = false; });
+}).observe(document.documentElement, { childList: true, subtree: true });
 
 function navGo(page) {
   // "schemas" suit la même permission que "catalog" (voir applyRoleVisibility)
