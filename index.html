@@ -4030,6 +4030,35 @@ function populateFournisseurFilter() {
 // sur la fiche.
 const FRENCH_STOPWORDS = new Set(['de','du','des','la','le','les','un','une','et','a','au','aux','en','pour','sur','avec','sans']);
 
+// Score de pertinence d'une pièce pour une recherche donnée — plus le score
+// est haut, plus la pièce remonte en premier dans les résultats. Un match
+// dans la désignation compte beaucoup plus qu'un match perdu dans une
+// référence fournisseur ou un nom de marque, et un mot trouvé en tout début
+// de désignation ("DISQUE DE FREIN...") est encore plus fort qu'un mot
+// trouvé au milieu — ça remonte naturellement les correspondances les plus
+// évidentes en premier au lieu d'un ordre quasi aléatoire.
+function computeSearchRelevance(a, terms) {
+  let score = 0;
+  const sap = (a.sap || '').toLowerCase();
+  const desc = (a.desc || '').toLowerCase();
+  const keywords = (a.keywords || '').toLowerCase();
+  const fournisseurRef = (a.fournisseurRef || '').toLowerCase();
+  const reste = ((a.fournisseur||'') + ' ' + (a.emplacement||'') + ' ' + (a.categorie||'') + ' ' + (a.marquesBus||[]).join(' ')).toLowerCase();
+
+  terms.forEach(term => {
+    if(sap === term) score += 1000; // SAP exact = quasiment certainement ce qui est cherché
+    else if(sap.includes(term)) score += 200;
+    if(desc.includes(term)) {
+      score += 50;
+      if(desc.startsWith(term)) score += 20;
+    }
+    if(keywords.includes(term)) score += 30;
+    if(fournisseurRef.includes(term)) score += 10;
+    if(reste.includes(term)) score += 5;
+  });
+  return score;
+}
+
 function matchesSearchTerms(text, query) {
   let terms = query.split(/[,\s]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
   const meaningful = terms.filter(t => !FRENCH_STOPWORDS.has(t));
@@ -4143,6 +4172,17 @@ function filterArticles() {
     catalogRotationMap = null;
     if(sort === 'nom') {
       arts.sort((a, b) => (a.desc || '').localeCompare(b.desc || '', 'fr'));
+    } else if(q.trim()) {
+      // Aucun tri explicite choisi, mais une recherche texte est active :
+      // par défaut, les résultats étaient affichés dans un ordre quasi
+      // arbitraire (celui du tableau interne) — la pièce la plus
+      // pertinente pouvait se retrouver en position 40 sans rien qui
+      // l'indique. On trie maintenant par pertinence : match dans la
+      // désignation > mots-clés > référence fournisseur > reste, avec un
+      // bonus si le mot apparaît en tout début plutôt que perdu au milieu.
+      const terms = q.trim().toLowerCase().split(/[,\s]+/).filter(Boolean);
+      arts.forEach(a => { a._relevance = computeSearchRelevance(a, terms); });
+      arts.sort((a, b) => b._relevance - a._relevance);
     }
   }
 
@@ -4290,6 +4330,7 @@ function renderArticleGrid(q) {
       <div class="article-body">
         <div class="article-ref">${escapeHtml(a.sap)}</div>
         <div class="article-name">${highlight(a.desc, q)}</div>
+        ${renderKeywordMatchHint(a, q)}
         ${a.categorie ? `<div style="margin-bottom:6px"><span class="badge" style="background:var(--navy);color:white">${escapeHtml(a.categorie)}</span></div>` : ''}
         ${a.alerte ? `<div style="margin-bottom:7px"><span class="badge" style="background:var(--amber-light);color:var(--amber-dark);border:1px solid var(--amber);font-weight:700">🔄 ${escapeHtml(a.alerte)}</span></div>` : ''}
         ${a.marquesBus && a.marquesBus.length ? `
@@ -4321,10 +4362,35 @@ function renderArticleGrid(q) {
     </div>` : '');
 }
 
+// Si la recherche ne matche PAS la désignation visible mais matche un
+// mot-clé, affiche un petit indice ("🏷️ trouvé via : silent bloc") — sinon
+// le résultat apparaît sans rien de visible qui explique pourquoi il est là,
+// ce qui est déroutant (notamment pour les mots-clés appris automatiquement
+// depuis une recherche ratée).
+function renderKeywordMatchHint(a, q) {
+  if(!q || !a.keywords) return '';
+  const terms = q.split(/[,\s]+/).map(t => t.trim().toLowerCase()).filter(t => t && !FRENCH_STOPWORDS.has(t));
+  if(!terms.length) return '';
+  const desc = (a.desc || '').toLowerCase();
+  const keywordsLower = a.keywords.toLowerCase();
+  const matchedInDesc = terms.some(t => desc.includes(t));
+  if(matchedInDesc) return '';
+  const matchedTerms = terms.filter(t => keywordsLower.includes(t));
+  if(!matchedTerms.length) return '';
+  return `<div style="font-size:11px;color:var(--text3);margin-bottom:6px">🏷️ trouvé via : ${matchedTerms.map(t => `<mark class="highlight">${escapeHtml(t)}</mark>`).join(', ')}</div>`;
+}
+
 function highlight(text, q) {
   const safe = escapeHtml(text);
   if(!q) return safe;
-  const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi');
+  // Surligne chaque mot de la recherche INDIVIDUELLEMENT (même logique que
+  // la recherche elle-même) — avant, ça ne cherchait que la phrase entière
+  // collée telle quelle, qui ne matchait presque jamais rien dès qu'on
+  // tapait plus d'un mot.
+  const terms = q.split(/[,\s]+/).map(t => t.trim()).filter(t => t && !FRENCH_STOPWORDS.has(t.toLowerCase()));
+  if(!terms.length) return safe;
+  const pattern = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|');
+  const re = new RegExp(`(${pattern})`, 'gi');
   return safe.replace(re, '<mark class="highlight">$1</mark>');
 }
 
