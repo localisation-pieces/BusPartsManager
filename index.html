@@ -1079,6 +1079,7 @@
             </div>
             <div id="admin-schema-list"></div>
             <button class="btn btn-outline" style="margin-top:14px" onclick="fixExistingHotspotsToCircles()">⚪ Convertir les zones existantes en cercles</button>
+            <button class="btn btn-outline" style="margin-top:8px" onclick="uppercaseExistingSchemaTexts()">🔠 Harmoniser les titres/chemins en majuscules</button>
           </div>
         </div>
 
@@ -1778,7 +1779,7 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
         <div class="form-group">
           <label>Titre du schéma</label>
-          <input type="text" id="schema-titre" placeholder="ex: Positionnement des capteurs côté droit du moteur">
+          <input type="text" id="schema-titre" placeholder="ex: Positionnement des capteurs côté droit du moteur" oninput="uppercaseInput(this)">
         </div>
         <div class="form-group">
           <label>Organe</label>
@@ -1787,7 +1788,7 @@
       </div>
       <div class="form-group" style="margin-bottom:14px">
         <label>Chemin dans le catalogue <span style="font-size:11px;color:var(--text3);font-weight:400">(optionnel — où retrouver ce schéma dans le catalogue fournisseur, ex: "Frein > Tête de roue > page 12")</span></label>
-        <input type="text" id="schema-chemin-catalogue" placeholder="ex: Frein > Tête de roue > page 12">
+        <input type="text" id="schema-chemin-catalogue" placeholder="ex: Frein > Tête de roue > page 12" oninput="uppercaseInput(this)">
       </div>
 
       <div id="schema-upload-zone" class="form-group">
@@ -4866,8 +4867,8 @@ async function startBulkSchemaImport(fileList) {
     // "Organe - Titre - Chemin catalogue.jpg". S'il n'y en a qu'un, le
     // chemin reste simplement vide (comportement identique à avant).
     const secondSep = reste.indexOf(' - ');
-    const titre = (secondSep === -1 ? reste : reste.slice(0, secondSep)).trim();
-    const cheminCatalogue = secondSep === -1 ? '' : reste.slice(secondSep + 3).trim();
+    const titre = (secondSep === -1 ? reste : reste.slice(0, secondSep)).trim().toUpperCase();
+    const cheminCatalogue = (secondSep === -1 ? '' : reste.slice(secondSep + 3)).trim().toUpperCase();
     if(!titre) {
       addLog(`❌ ${file.name} — titre manquant après le tiret`, 'var(--danger)');
       nomInvalide++;
@@ -5091,6 +5092,30 @@ async function fixExistingHotspotsToCircles() {
 
   save();
   showNotif('⚪', 'Zones converties', `${fixed} zone(s) transformée(s) en cercle(s)${failed ? `, ${failed} échec(s) (image inaccessible)` : ''}`);
+}
+
+// Harmonise en majuscules le titre et le chemin catalogue de tous les
+// schémas existants — les nouvelles saisies suivent déjà ce format
+// automatiquement (uppercaseInput sur les champs + import en masse), cet
+// outil rattrape juste ce qui a été créé avant.
+function uppercaseExistingSchemaTexts() {
+  const schemas = DB.schemas || [];
+  if(!schemas.length) { alert('Aucun schéma existant à harmoniser.'); return; }
+  let touched = 0;
+  schemas.forEach(s => {
+    const titreMaj = (s.titre || '').toUpperCase();
+    const cheminMaj = (s.cheminCatalogue || '').toUpperCase();
+    if(s.titre !== titreMaj || s.cheminCatalogue !== cheminMaj) {
+      s.titre = titreMaj;
+      s.cheminCatalogue = cheminMaj;
+      touched++;
+    }
+  });
+  if(!touched) { alert('✅ Tous les schémas sont déjà en majuscules.'); return; }
+  save();
+  renderAdminSchemaList();
+  if(currentView === 'schemas') renderSchemasPage();
+  showNotif('🔠', 'Textes harmonisés', `${touched} schéma(s) mis en majuscules (titre + chemin catalogue)`);
 }
 
 // --- Mini-picker pour choisir la pièce reliée à la zone qu'on vient de dessiner ---
