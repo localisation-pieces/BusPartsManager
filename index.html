@@ -1252,10 +1252,11 @@
       <div>
         <div class="form-group">
           <label>Photo de la pièce</label>
-          <div id="img-preview-wrap">
-            <img id="article-img-preview" class="img-preview" alt="preview">
+          <div id="img-preview-wrap" style="position:relative">
+            <img id="article-img-preview" class="img-preview" alt="preview" style="transition:transform .15s">
             <label class="upload-label" for="article-photo-input"><span id="upload-label-text">📷 Choisir une photo</span></label>
             <input type="file" id="article-photo-input" accept="image/*" onchange="previewImage(this)">
+            <button type="button" id="article-photo-rotate-btn" onclick="rotateArticlePhoto()" style="display:none;position:absolute;top:6px;right:6px;width:32px;height:32px;border-radius:50%;border:none;background:rgba(0,0,0,0.55);color:white;font-size:15px;cursor:pointer" title="Pivoter de 90°">↻</button>
           </div>
         </div>
         <div class="form-group">
@@ -2463,6 +2464,7 @@ let currentSettingType = null;
 let currentOTOrderId = null;
 let currentBLOrderId = null;
 let pendingPhotoBlob = null;   // Photo compressée en attente d'upload (nouvelle sélection non encore enregistrée)
+let pendingPhotoRotation = 0;  // Rotation en cours d'édition (0/90/180/270°), appliquée à l'enregistrement
 let currentPhotoUrl = '';      // URL (ou ancien base64) de la photo actuelle de la pièce en cours d'édition
 
 let applyingRemote = false; // évite de renvoyer en boucle les données qu'on vient de recevoir
@@ -3916,7 +3918,7 @@ function renderSchemaListCard(a) {
     <div id="schema-list-card-${a.id}" onclick="toggleSchemaListSelection('${a.id}', event)" style="display:flex;align-items:center;gap:10px;padding:8px;border:1.5px solid ${selected?'var(--primary)':'var(--border)'};border-radius:var(--radius);cursor:pointer;background:${selected?'var(--primary-light, #eef4ff)':'var(--surface)'};transition:all .15s">
       <input type="checkbox" ${selected?'checked':''} style="width:17px;height:17px;flex-shrink:0;pointer-events:none">
       <div style="width:40px;height:40px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
-        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_100,h_100,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
+        ${a.photo ? `<img src="${articlePhotoUrl(a,'w_100,h_100,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
       </div>
       <div style="flex:1;min-width:0" onclick="event.stopPropagation();openArticleDetail('${a.id}')">
         <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}</div>
@@ -4322,7 +4324,7 @@ function renderArticleGrid(q) {
   grid.innerHTML = visible.map(a => `
     <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
       <div class="article-img" ${a.photo ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
-        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
+        ${a.photo ? `<img src="${articlePhotoUrl(a,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
         ${getSchemaLinkedArticleIds().has(a.id) ? `<span title="Localisée sur un schéma" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px">📐</span>` : ''}
         ${catalogRotationMap ? `<span class="badge" style="position:absolute;bottom:6px;left:6px;background:var(--navy);color:white">🔄 ${catalogRotationMap[a.id] || 0}</span>` : ''}
         ${a.photo ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.5);color:white;font-size:10px;padding:2px 6px;border-radius:4px">🔍 Agrandir</span>` : ''}
@@ -4447,7 +4449,7 @@ function openArticleDetail(id) {
     ${a.alerte ? `<div style="margin-bottom:14px;padding:10px 14px;background:var(--amber-light);border:1.5px solid var(--amber);border-radius:var(--radius);color:var(--amber-dark);font-weight:700;font-size:13px">🔄 ${escapeHtml(a.alerte)}</div>` : ''}
     <div class="article-detail">
       <div class="article-detail-img" ${a.photo ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
-        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
+        ${a.photo ? `<img src="${articlePhotoUrl(a,'w_700')}" alt="${escapeHtml(a.desc)}">` : '<span style="font-size:64px">⚙️</span>'}
       </div>
       <div>
         <div class="detail-row"><span class="label">Référence SAP</span><span style="font-family:var(--font-mono);font-weight:800;font-size:19px;color:var(--amber-dark)">${a.sap}</span></div>
@@ -4634,14 +4636,20 @@ function openArticleModal(id) {
 
   const prev = document.getElementById('article-img-preview');
   const lbl = document.getElementById('upload-label-text');
+  const rotateBtn = document.getElementById('article-photo-rotate-btn');
+  pendingPhotoRotation = a ? (a.photoRotation || 0) : 0;
   if(currentPhotoUrl) {
     prev.src = currentPhotoUrl;
     prev.style.display = 'block';
+    prev.style.transform = `rotate(${pendingPhotoRotation}deg)`;
     if(lbl) lbl.textContent = '📷 Changer la photo';
+    if(rotateBtn) rotateBtn.style.display = 'flex';
   } else {
     prev.style.display = 'none';
     prev.src = '';
+    prev.style.transform = 'none';
     if(lbl) lbl.textContent = '📷 Choisir une photo';
+    if(rotateBtn) rotateBtn.style.display = 'none';
   }
 
   // Populate selects
@@ -4715,6 +4723,16 @@ const CLOUDINARY_UPLOAD_PRESET = 'busparts_articles';
 function cloudinaryOptimized(url, transform) {
   if(!url || !url.includes('/upload/')) return url;
   return url.replace('/upload/', `/upload/${transform},f_auto,q_auto/`);
+}
+
+// Applique la rotation choisie pour cette pièce (0/90/180/270°) via le
+// paramètre d'angle Cloudinary — pas besoin de retélécharger/réuploader la
+// photo, la rotation est appliquée à la volée à chaque affichage.
+function articlePhotoUrl(a, transform) {
+  if(!a || !a.photo) return '';
+  const rotation = a.photoRotation || 0;
+  const t = rotation ? `${transform},a_${rotation}` : transform;
+  return cloudinaryOptimized(a.photo, t);
 }
 
 async function uploadPhotoToCloudinary(articleId, blob) {
@@ -5009,6 +5027,16 @@ async function startBulkSchemaImport(fileList) {
   document.getElementById('bulk-schema-input').value = '';
 }
 
+// Pivote l'aperçu de 90° à chaque clic (0 -> 90 -> 180 -> 270 -> 0) — la
+// rotation choisie est enregistrée avec la pièce et appliquée partout où sa
+// photo est affichée (carte catalogue, fiche détail, zoom...), sans jamais
+// avoir besoin de retélécharger/réuploader l'image elle-même.
+function rotateArticlePhoto() {
+  pendingPhotoRotation = (pendingPhotoRotation + 90) % 360;
+  const prev = document.getElementById('article-img-preview');
+  if(prev) prev.style.transform = `rotate(${pendingPhotoRotation}deg)`;
+}
+
 async function previewImage(input) {
   const file = input.files[0];
   if(!file) return;
@@ -5017,9 +5045,13 @@ async function previewImage(input) {
   try {
     const blob = await compressImageToBlob(file, 900, 0.75);
     pendingPhotoBlob = blob;
+    pendingPhotoRotation = 0; // une nouvelle photo repart sans rotation héritée de l'ancienne
     const prev = document.getElementById('article-img-preview');
     prev.src = URL.createObjectURL(blob);
     prev.style.display = 'block';
+    prev.style.transform = 'none';
+    const rotateBtn = document.getElementById('article-photo-rotate-btn');
+    if(rotateBtn) rotateBtn.style.display = 'flex';
     if(lbl) lbl.textContent = '📷 Changer la photo';
   } catch(e) {
     if(lbl) lbl.textContent = currentPhotoUrl ? '📷 Changer la photo' : '📷 Choisir une photo';
@@ -5243,7 +5275,7 @@ function filterHotspotArticleOptions() {
   box.innerHTML = filtered.map(a => `
     <div onclick="chooseHotspotArticle('${a.id}')" style="display:flex;align-items:center;gap:10px;padding:10px 8px;cursor:pointer;border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
       <div style="width:36px;height:36px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
-        ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_80,h_80,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
+        ${a.photo ? `<img src="${articlePhotoUrl(a,'w_80,h_80,c_fill')}" style="width:100%;height:100%;object-fit:cover">` : '⚙️'}
       </div>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600">${escapeHtml(a.desc)}</div>
@@ -5528,7 +5560,8 @@ async function saveArticle() {
     alerte: sanitizeInput(document.getElementById('art-alerte').value),
     qtyIntervention: sanitizeInput(document.getElementById('art-qty-intervention').value),
     marquesBus: getSelectedMarques(),
-    photo: currentPhotoUrl
+    photo: currentPhotoUrl,
+    photoRotation: pendingPhotoRotation
   };
 
   // Symétrique du contrôle déjà fait côté schéma (quand on relie une pièce
@@ -5668,7 +5701,7 @@ function renderCartView() {
           return `
           <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;${i>0?'border-top:1px solid var(--border)':''}">
             <div style="width:64px;height:64px;border-radius:10px;background:var(--surface2);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid var(--border)" ${a.photo?`onclick="openPhotoZoom('${a.photo}', event)" style="cursor:zoom-in"`:''}>
-              ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_140,h_140,c_fill')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">` : '<span style="font-size:28px">⚙️</span>'}
+              ${a.photo ? `<img src="${articlePhotoUrl(a,'w_140,h_140,c_fill')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">` : '<span style="font-size:28px">⚙️</span>'}
             </div>
             <div style="flex:1;min-width:0">
               <div style="font-size:14px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.desc)}${c.fromKit?`<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;background:var(--navy);color:white;margin-left:6px;vertical-align:middle">📦 ${escapeHtml(c.kitNom||'Kit')}</span>`:''}</div>
@@ -5942,7 +5975,7 @@ function renderOrderCard(o) {
         const a = DB.articles.find(x => x.id === item.articleId);
         return a ? `<div class="order-item">
           <div style="width:40px;height:40px;border-radius:8px;background:var(--surface);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid var(--border)">
-            ${a.photo ? `<img src="${cloudinaryOptimized(a.photo,'w_100,h_100,c_fill')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">` : '<span style="font-size:18px">⚙️</span>'}
+            ${a.photo ? `<img src="${articlePhotoUrl(a,'w_100,h_100,c_fill')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">` : '<span style="font-size:18px">⚙️</span>'}
           </div>
           <div style="flex:1"><div style="font-size:13px;font-weight:600">${escapeHtml(a.desc)}</div>
           <div style="font-size:11px;color:var(--text3)">SAP: ${escapeHtml(a.sap)} · Emplac.: ${escapeHtml(a.emplacement)} · ${escapeHtml(getMagasinLabel(a.magasin))}</div></div>
@@ -6204,7 +6237,9 @@ function openPhotoZoom(urlOrArray, e) {
 function openArticlePhotoZoom(articleId, e) {
   const a = DB.articles.find(x => x.id === articleId);
   if(!a) return;
-  openPhotoZoom(a.photo, e);
+  const rotation = a.photoRotation || 0;
+  const url = rotation ? a.photo.replace('/upload/', `/upload/a_${rotation}/`) : a.photo;
+  openPhotoZoom(url, e);
 }
 
 function renderZoomImage() {
