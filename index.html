@@ -749,7 +749,7 @@
       <div class="view" id="view-schemas">
         <div id="schemas-category-tiles-row" style="display:flex;gap:6px;overflow-x:auto;padding:2px 2px 10px;-webkit-overflow-scrolling:touch"></div>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-          <input type="text" id="schemas-page-search" placeholder="🔍 Chercher un organe ou un schéma..." oninput="renderSchemasPage()" style="flex:1;min-width:200px;max-width:340px;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);box-sizing:border-box">
+          <input type="text" id="schemas-page-search" placeholder="🔍 Organe, titre, ou nom/SAP d'une pièce..." oninput="renderSchemasPage()" style="flex:1;min-width:200px;max-width:340px;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);box-sizing:border-box">
           <button class="btn btn-primary staff-only" onclick="openSchemaEditorFromSchemasPage()">📐 Ajouter un schéma</button>
         </div>
         <div id="schemas-page-list"></div>
@@ -1089,6 +1089,7 @@
             <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">+ Ajouter</button>
           </div>
           <div class="admin-section-body">
+            <input type="text" id="users-search" placeholder="🔍 Chercher un agent par nom ou matricule..." oninput="renderAdmin(true)" style="width:100%;max-width:340px;margin-bottom:14px;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);box-sizing:border-box">
             <div id="users-list"></div>
           </div>
         </div>
@@ -6666,6 +6667,18 @@ function renderSchemasPage() {
   const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
   const isStaff = currentUser && (currentUser.role === 'admin' || currentUser.role === 'magasinier');
 
+  // La recherche matche l'organe, le titre du schéma, OU le nom/SAP d'une
+  // des pièces qui y sont reliées — pratique pour retrouver "sur quel
+  // schéma est cette pièce" sans connaître le titre du schéma lui-même.
+  function schemaMatchesQuery(s, organe) {
+    if(organe.toLowerCase().includes(q) || s.titre.toLowerCase().includes(q)) return true;
+    return (s.hotspots || []).some(h => {
+      if(!h.articleId) return false;
+      const a = DB.articles.find(x => x.id === h.articleId);
+      return a && (a.desc.toLowerCase().includes(q) || a.sap.includes(q));
+    });
+  }
+
   const knownCategories = DB.settings.categories || [];
   const byOrgane = {};
   schemas.forEach(s => { (byOrgane[s.categorie] = byOrgane[s.categorie] || []).push(s); });
@@ -6676,14 +6689,12 @@ function renderSchemasPage() {
 
   // La sélection des tuiles d'organe restreint d'abord la liste (logique
   // "ou" comme sur le catalogue), puis la recherche texte affine par nom
-  // d'organe ou par titre de schéma.
+  // d'organe, titre de schéma, ou pièce reliée.
   if(selectedCategoryFilters.size) {
     orderedKeys = orderedKeys.filter(organe => selectedCategoryFilters.has(organe));
   }
   if(q) {
-    orderedKeys = orderedKeys.filter(organe =>
-      organe.toLowerCase().includes(q) || byOrgane[organe].some(s => s.titre.toLowerCase().includes(q))
-    );
+    orderedKeys = orderedKeys.filter(organe => byOrgane[organe].some(s => schemaMatchesQuery(s, organe)));
   }
 
   if(!orderedKeys.length) {
@@ -6693,7 +6704,7 @@ function renderSchemasPage() {
 
   container.innerHTML = orderedKeys.map(organe => {
     const items = q
-      ? byOrgane[organe].filter(s => organe.toLowerCase().includes(q) || s.titre.toLowerCase().includes(q))
+      ? byOrgane[organe].filter(s => schemaMatchesQuery(s, organe))
       : byOrgane[organe];
     return `
     <div style="margin-bottom:22px">
@@ -6812,7 +6823,12 @@ function renderAdmin(skipFreshFetch) {
   renderAdminSchemaList();
 
   const el = document.getElementById('users-list');
-  el.innerHTML = DB.users.filter(u => u.statut !== 'en_attente').map(u => {
+  const usersSearchInput = document.getElementById('users-search');
+  const usersQuery = usersSearchInput ? usersSearchInput.value.trim().toLowerCase() : '';
+  el.innerHTML = DB.users.filter(u => u.statut !== 'en_attente').filter(u => {
+    if(!usersQuery) return true;
+    return u.name.toLowerCase().includes(usersQuery) || (u.matricule||'').includes(usersQuery);
+  }).map(u => {
     const perms = u.perms || [];
     const magLabel = u.magasin ? getMagasinLabel(u.magasin) : '—';
     return `
