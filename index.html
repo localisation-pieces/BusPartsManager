@@ -1747,7 +1747,11 @@
 <div class="modal-overlay" id="modal-schema-viewer">
   <div class="modal" style="width:min(900px,94vw)">
     <div class="modal-header">
-      <h3 id="schema-viewer-title">📐 Schéma</h3>
+      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+        <button class="btn btn-outline btn-sm" id="schema-viewer-prev-btn" onclick="navigateArticleSchemas(-1)" style="display:none;flex-shrink:0" title="Schéma précédent lié à cette pièce">◀</button>
+        <h3 id="schema-viewer-title" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📐 Schéma</h3>
+        <button class="btn btn-outline btn-sm" id="schema-viewer-next-btn" onclick="navigateArticleSchemas(1)" style="display:none;flex-shrink:0" title="Schéma suivant lié à cette pièce">▶</button>
+      </div>
       <button class="modal-close" onclick="closeModal('modal-schema-viewer')">✕</button>
     </div>
     <div class="modal-body">
@@ -3817,7 +3821,20 @@ function openSchemaViewer(schemaId, highlightArticleId) {
   const s = (DB.schemas || []).find(x => x.id === schemaId);
   if(!s) return;
   currentSchemaId = schemaId;
-  document.getElementById('schema-viewer-title').textContent = `📐 ${s.titre}`;
+
+  // Flèches précédent/suivant : uniquement actives si ce schéma fait partie
+  // d'une navigation "voir tous les schémas de cette pièce" en cours — sinon
+  // ouvrir un schéma au hasard depuis le catalogue afficherait des flèches
+  // qui n'ont pas de sens dans ce contexte.
+  const inNavContext = articleSchemaNavList.length > 1 && articleSchemaNavList.includes(schemaId);
+  const prevBtn = document.getElementById('schema-viewer-prev-btn');
+  const nextBtn = document.getElementById('schema-viewer-next-btn');
+  if(inNavContext) articleSchemaNavIndex = articleSchemaNavList.indexOf(schemaId);
+  prevBtn.style.display = inNavContext ? '' : 'none';
+  nextBtn.style.display = inNavContext ? '' : 'none';
+  const positionSuffix = inNavContext ? ` (${articleSchemaNavIndex + 1}/${articleSchemaNavList.length})` : '';
+
+  document.getElementById('schema-viewer-title').textContent = `📐 ${s.titre}${positionSuffix}`;
   const cheminEl = document.getElementById('schema-viewer-chemin');
   if(s.cheminCatalogue) {
     cheminEl.style.display = 'block';
@@ -4406,11 +4423,38 @@ function renderArticleSchemaLinks(articleId) {
   if(!schemas.length) return '';
   return `
     <div style="margin-top:14px;padding:12px 14px;background:var(--surface2);border-radius:var(--radius);border:1px solid var(--border)">
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">📐 Localisée sur ${schemas.length > 1 ? 'ces schémas' : 'ce schéma'}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2)">📐 Localisée sur ${schemas.length > 1 ? 'ces schémas' : 'ce schéma'}</div>
+        ${schemas.length > 1 ? `<button class="btn btn-primary btn-sm" onclick="openAllArticleSchemas('${articleId}')">📐 Voir tous (${schemas.length})</button>` : ''}
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px">
         ${schemas.map(s => `<button class="btn btn-outline btn-sm" onclick="closeModal('modal-article-detail');openSchemaViewer('${s.id}', '${articleId}')">📐 ${escapeHtml(s.titre)} <span style="color:var(--text3);font-weight:400">(${escapeHtml(s.categorie)})</span></button>`).join('')}
       </div>
     </div>`;
+}
+
+// Un clic ouvre le premier schéma lié à cette pièce, avec des flèches
+// précédent/suivant dans la fenêtre pour parcourir tous les autres sans
+// revenir à la fiche article entre chaque — plutôt qu'ouvrir plusieurs
+// fenêtres en même temps, impossible avec une seule visionneuse.
+let articleSchemaNavList = [];
+let articleSchemaNavIndex = 0;
+let articleSchemaNavArticleId = null;
+
+function openAllArticleSchemas(articleId) {
+  const schemas = (DB.schemas || []).filter(s => (s.hotspots || []).some(h => h.articleId === articleId));
+  if(!schemas.length) return;
+  articleSchemaNavList = schemas.map(s => s.id);
+  articleSchemaNavIndex = 0;
+  articleSchemaNavArticleId = articleId;
+  closeModal('modal-article-detail');
+  openSchemaViewer(articleSchemaNavList[0], articleId);
+}
+
+function navigateArticleSchemas(direction) {
+  if(!articleSchemaNavList.length) return;
+  articleSchemaNavIndex = (articleSchemaNavIndex + direction + articleSchemaNavList.length) % articleSchemaNavList.length;
+  openSchemaViewer(articleSchemaNavList[articleSchemaNavIndex], articleSchemaNavArticleId);
 }
 
 function renderArticleMovements(articleId) {
