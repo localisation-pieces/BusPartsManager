@@ -6667,15 +6667,15 @@ function renderSchemasPage() {
   const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
   const isStaff = currentUser && (currentUser.role === 'admin' || currentUser.role === 'magasinier');
 
-  // La recherche matche l'organe, le titre du schéma, OU le nom/SAP d'une
-  // des pièces qui y sont reliées — pratique pour retrouver "sur quel
+  // La recherche matche l'organe, le titre du schéma, OU le nom/SAP/mots-clés
+  // d'une des pièces qui y sont reliées — pratique pour retrouver "sur quel
   // schéma est cette pièce" sans connaître le titre du schéma lui-même.
   function schemaMatchesQuery(s, organe) {
     if(organe.toLowerCase().includes(q) || s.titre.toLowerCase().includes(q)) return true;
     return (s.hotspots || []).some(h => {
       if(!h.articleId) return false;
       const a = DB.articles.find(x => x.id === h.articleId);
-      return a && (a.desc.toLowerCase().includes(q) || a.sap.includes(q));
+      return a && (a.desc.toLowerCase().includes(q) || a.sap.includes(q) || (a.keywords||'').toLowerCase().includes(q));
     });
   }
 
