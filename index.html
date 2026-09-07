@@ -7992,14 +7992,21 @@ function applyReorgCategoryChanges(source) {
 // avec un détail par section pour repérer ce qui pèse le plus lourd.
 function checkDatabaseSize() {
   const { users, ...dbWithoutUsers } = DB;
-  const fullJSON = JSON.stringify(dbWithoutUsers);
+  // Applique le même nettoyage que save() avant de mesurer — sinon on
+  // mesure les données en mémoire (avec tous les champs vides), pas ce qui
+  // est réellement envoyé à Firestore après le nettoyage.
+  const slimArticles = (dbWithoutUsers.articles || []).map(slimArticleForSave);
+  const slimSchemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
+  const dbForMeasure = { ...dbWithoutUsers, articles: slimArticles, schemas: slimSchemas };
+  const fullJSON = JSON.stringify(dbForMeasure);
   const totalBytes = new Blob([fullJSON]).size;
   const LIMIT = 1048576; // 1 Mo, limite Firestore par document
   const pct = Math.min(100, Math.round((totalBytes / LIMIT) * 1000) / 10);
 
   const sections = ['articles','orders','kits','tools','loans','notifications','messages','activity','stockMovements','carts','schemas','settings'];
   const breakdown = sections.map(key => {
-    const size = DB[key] !== undefined ? new Blob([JSON.stringify(DB[key])]).size : 0;
+    const source = key === 'articles' ? slimArticles : key === 'schemas' ? slimSchemas : DB[key];
+    const size = source !== undefined ? new Blob([JSON.stringify(source)]).size : 0;
     return { key, size };
   }).sort((a,b) => b.size - a.size).filter(s => s.size > 0);
 
