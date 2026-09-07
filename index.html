@@ -1133,6 +1133,14 @@
             </p>
             <button class="btn btn-outline" onclick="checkDatabaseSize()">📏 Vérifier la taille actuelle</button>
             <div id="db-size-result" style="margin-top:14px"></div>
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+              <div style="font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:10px">🧹 Vider un historique (journaux — sans impact sur le catalogue, les schémas ni les comptes)</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-outline btn-sm" onclick="clearDbSection('stockMovements','les mouvements de stock')">🔄 Mouvements de stock</button>
+                <button class="btn btn-outline btn-sm" onclick="clearDbSection('notifications','les notifications')">🔔 Notifications</button>
+                <button class="btn btn-outline btn-sm" onclick="clearDbSection('activity','le fil d\'activité du tableau de bord')">📢 Activité récente</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -7990,6 +7998,20 @@ function applyReorgCategoryChanges(source) {
 // — reproduit exactement la même exclusion (DB.users, géré à part) pour que
 // le chiffre affiché corresponde vraiment au document plafonné à 1 Mo,
 // avec un détail par section pour repérer ce qui pèse le plus lourd.
+// Vide entièrement une section "journal" (historique) — jamais utilisé pour
+// le catalogue, les schémas, les commandes en cours ou les comptes, qui ont
+// tous leur propre logique de suppression dédiée ailleurs.
+function clearDbSection(key, label) {
+  const count = (DB[key] || []).length;
+  if(!count) { alert(`Rien à vider — ${label} est déjà vide.`); return; }
+  if(!confirm(`Vider complètement ${label} (${count} entrée(s)) ? Cette action ne peut pas être annulée depuis l'application.`)) return;
+  DB[key] = [];
+  save();
+  if(key === 'notifications') updateBadges();
+  showNotif('🧹', 'Historique vidé', `${label} (${count} entrée(s) supprimée(s))`);
+  checkDatabaseSize();
+}
+
 function checkDatabaseSize() {
   const { users, ...dbWithoutUsers } = DB;
   // Applique le même nettoyage que save() avant de mesurer — sinon on
