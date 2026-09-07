@@ -1153,6 +1153,14 @@
               <button class="btn btn-outline" onclick="runArticlesMigration()">🚀 Lancer la migration des pièces</button>
               <div id="articles-migration-result" style="margin-top:10px;font-size:13px"></div>
             </div>
+            <div style="margin-top:16px;padding-top:16px;border-top:2px solid var(--amber)">
+              <div style="font-size:12.5px;font-weight:700;color:var(--amber-dark);margin-bottom:6px">🚧 Restructuration en cours — étape 1 : migration des schémas</div>
+              <p style="font-size:12.5px;color:var(--text2);margin-bottom:10px">
+                Même principe pour les schémas, suite à la perte constatée le 06/09. Sans danger : n'efface rien, peut être relancé plusieurs fois sans problème.
+              </p>
+              <button class="btn btn-outline" onclick="runSchemasMigration()">🚀 Lancer la migration des schémas</button>
+              <div id="schemas-migration-result" style="margin-top:10px;font-size:13px"></div>
+            </div>
           </div>
         </div>
 
@@ -2006,6 +2014,12 @@
   // pièces, seulement la limite (1 Mo) par pièce individuelle, totalement
   // hors d'atteinte pour une seule fiche article.
   const ARTICLES_COL = collection(fsdb, 'bpm_articles');
+  // Même traitement pour les schémas — perte de données constatée le
+  // 06/09/2026 (schémas ajoutés jamais parvenus jusqu'à Firestore, le
+  // document bpm/database étant déjà plein à ce moment-là, échec silencieux
+  // de l'enregistrement). Une collection à part élimine ce risque
+  // définitivement, comme pour les pièces.
+  const SCHEMAS_COL = collection(fsdb, 'bpm_schemas');
 
   // Écriture CIBLÉE du panier d'un seul utilisateur (updateDoc avec un champ
   // en notation pointée "carts.<uid>"), plutôt que de passer par l'envoi de
@@ -2239,6 +2253,59 @@
   // (écrase avec les mêmes données si on le relance par erreur).
   window.fbMigrateArticlesToCollection = async function(articles) {
     return window.fbSaveArticlesBatch(articles);
+  };
+
+  // ---- Collection des schémas (bpm_schemas) — même principe que les pièces ----
+  let schemasUnsub = null;
+  window.startSchemasSync = function() {
+    if (schemasUnsub) return;
+    schemasUnsub = onSnapshot(SCHEMAS_COL, (snap) => {
+      const scs = [];
+      snap.forEach(d => scs.push(d.data()));
+      window.applyRemoteSchemas(scs);
+    }, (err) => {
+      console.warn('Erreur de synchronisation des schémas:', err);
+    });
+  };
+  window.stopSchemasSync = function() {
+    if (schemasUnsub) { schemasUnsub(); schemasUnsub = null; }
+  };
+
+  window.fbSaveSchema = async function(schema) {
+    try {
+      await setDoc(doc(fsdb, 'bpm_schemas', schema.id), schema);
+      return true;
+    } catch(e) {
+      console.warn('Sauvegarde du schéma échouée:', e);
+      return false;
+    }
+  };
+
+  window.fbDeleteSchema = async function(schemaId) {
+    try {
+      await deleteDoc(doc(fsdb, 'bpm_schemas', schemaId));
+      return true;
+    } catch(e) {
+      console.warn('Suppression du schéma échouée:', e);
+      return false;
+    }
+  };
+
+  window.fbSaveSchemasBatch = async function(schemas) {
+    if (!schemas.length) return { ok: true };
+    const chunks = [];
+    for (let i = 0; i < schemas.length; i += 450) chunks.push(schemas.slice(i, i + 450));
+    try {
+      for (const chunk of chunks) {
+        const batch = writeBatch(fsdb);
+        chunk.forEach(s => batch.set(doc(fsdb, 'bpm_schemas', s.id), s));
+        await batch.commit();
+      }
+      return { ok: true };
+    } catch(e) {
+      console.warn('Écriture groupée des schémas échouée:', e);
+      return { ok: false, code: e && e.code, message: e && e.message };
+    }
   };
 
   // Écriture "débattue" (debounced) du document complet. Ne fait rien tant
@@ -2680,6 +2747,30 @@ async function flushDirtyArticles() {
   if(toSave.length) await window.fbSaveArticlesBatch(toSave);
 }
 
+// Même principe que markArticleDirty/flushDirtyArticles, pour les schémas.
+let dirtySchemaIds = new Set();
+let schemaFlushTimer = null;
+function markSchemaDirty(id) {
+  if(!id) return;
+  dirtySchemaIds.add(id);
+  scheduleSchemaFlush();
+}
+function markSchemasDirty(ids) {
+  (ids || []).forEach(id => { if(id) dirtySchemaIds.add(id); });
+  scheduleSchemaFlush();
+}
+function scheduleSchemaFlush() {
+  if(schemaFlushTimer) clearTimeout(schemaFlushTimer);
+  schemaFlushTimer = setTimeout(flushDirtySchemas, 600);
+}
+async function flushDirtySchemas() {
+  const ids = [...dirtySchemaIds];
+  dirtySchemaIds.clear();
+  if(!ids.length || !window.fbSaveSchemasBatch) return;
+  const toSave = ids.map(id => (DB.schemas || []).find(s => s.id === id)).filter(Boolean).map(slimSchemaForSave);
+  if(toSave.length) await window.fbSaveSchemasBatch(toSave);
+}
+
 function save() {
   // Cache local instantané (fonctionne hors-ligne, sert de secours) —
   // seulement une fois les données complètes chargées (après connexion),
@@ -2718,6 +2809,12 @@ function save() {
     // entier, donc un champ absent ici disparaît bien du document — exactement
     // l'effet recherché, plus jamais de pièces dans bpm/database.
     delete dbWithoutUsers.articles;
+    // Même traitement prévu pour les schémas (perte constatée le
+    // 06/09/2026), mais PAS ENCORE actif ici — le double-écrit (ancien
+    // document + nouvelle collection bpm_schemas via markSchemaDirty) reste
+    // volontairement en place tant que la migration n'est pas confirmée,
+    // pour ne jamais se retrouver sans AUCUNE copie pendant la transition.
+    // Sera retiré (delete comme pour articles) à l'étape 2.
     dbWithoutUsers.schemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
     window.fbSaveData(dbWithoutUsers);
   }
@@ -2824,6 +2921,26 @@ window.applyRemoteArticles = function(articles) {
   }
 };
 
+// Même principe qu'applyRemoteArticles, pour les schémas — remplace la
+// ligne "if(data.schemas) DB.schemas = data.schemas" ci-dessous comme
+// unique source de vérité pour DB.schemas.
+window.applyRemoteSchemas = function(schemas) {
+  applyingRemote = true;
+  try {
+    DB.schemas = schemas;
+    if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
+    const modalOpen = document.querySelector('.modal.open, .modal-overlay.open');
+    if (!modalOpen && document.getElementById('app').style.display !== 'none' && typeof currentView !== 'undefined') {
+      try {
+        if(currentView === 'schemas') renderSchemasPage();
+        if(currentView === 'admin') renderAdminSchemaList();
+      } catch(e) {}
+    }
+  } finally {
+    applyingRemote = false;
+  }
+};
+
 window.applyRemoteData = function(data) {
   applyingRemote = true;
   try {
@@ -2842,6 +2959,11 @@ window.applyRemoteData = function(data) {
     if(data.activity) DB.activity = data.activity;
     if(data.stockMovements) DB.stockMovements = data.stockMovements;
     if(data.carts) DB.carts = data.carts;
+    // Restructuration schémas — ÉTAPE 1 seulement pour l'instant : encore lu
+    // ici depuis l'ancien document, le temps de confirmer que la migration
+    // vers bpm_schemas (voir runSchemasMigration) s'est bien passée. Sera
+    // retiré à l'étape 2, une fois confirmé (même prudence que pour les
+    // pièces).
     if(data.schemas) DB.schemas = data.schemas;
     if(data.settings) {
       DB.settings = data.settings;
@@ -3305,6 +3427,7 @@ async function doLogin() {
   restoreCachedFullDataIfAny();
   window.startFullDataSync && window.startFullDataSync();
   window.startArticlesSync && window.startArticlesSync();
+  // ÉTAPE 2 pas encore activée : window.startSchemasSync() (en attente de confirmation migration)
   startApp();
 }
 
@@ -3317,7 +3440,8 @@ function doLogout() {
   // plus y avoir accès (ni au réseau, ni dans les outils de développement).
   window.stopFullDataSync && window.stopFullDataSync();
   window.stopArticlesSync && window.stopArticlesSync();
-  DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = [];
+  DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = []; DB.schemas = [];
+  // window.stopSchemasSync() sera activé avec l'étape 2
   DB.notifications = []; DB.messages = []; DB.activity = []; DB.stockMovements = [];
   fullDataLoaded = false;
   try { localStorage.removeItem('bpm_db'); } catch(e){}
@@ -3367,6 +3491,7 @@ window.tryAutoLogin = function() {
       restoreCachedFullDataIfAny();
       window.startFullDataSync && window.startFullDataSync();
       window.startArticlesSync && window.startArticlesSync();
+      // window.startSchemasSync() sera activé avec l'étape 2
       startApp();
       resolve(true);
     });
@@ -4010,7 +4135,7 @@ function renderSchemaHint() {
 function openSchemaList(categorie) {
   document.getElementById('schema-list-title').textContent = `📐 Schémas — ${categorie}`;
   const grid = document.getElementById('schema-list-grid');
-  const schemas = (DB.schemas || []).filter(s => s.categorie === categorie);
+  const schemas = sortSchemasByOrdre((DB.schemas || []).filter(s => s.categorie === categorie));
   if(!schemas.length) {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><p>Aucun schéma pour cet organe pour le moment.</p></div>';
   } else {
@@ -5249,6 +5374,7 @@ async function startBulkSchemaImport(fileList) {
 
   const knownCategories = DB.settings.categories || [];
   let ok = 0, organeInconnu = 0, nomInvalide = 0, erreur = 0, doublon = 0;
+  const createdIds = [];
 
   for(let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -5293,10 +5419,13 @@ async function startBulkSchemaImport(fileList) {
       const blob = await compressImageToBlob(file, 1600, 0.85);
       const url = await uploadPhotoToCloudinary('schema_' + Date.now(), blob);
       if(!DB.schemas) DB.schemas = [];
+      const newId = 's' + Date.now() + Math.random().toString(36).slice(2,6);
+      const maxOrdre = DB.schemas.filter(s => s.categorie === organe).reduce((m,s) => Math.max(m, s.ordre||0), 0);
       DB.schemas.push({
-        id: 's' + Date.now() + Math.random().toString(36).slice(2,6),
-        titre, categorie: organe, image: url, cheminCatalogue, hotspots: []
+        id: newId,
+        titre, categorie: organe, image: url, cheminCatalogue, hotspots: [], ordre: maxOrdre + 1
       });
+      createdIds.push(newId);
       addLog(`✅ ${file.name} → "${titre}" (${organe})${cheminCatalogue ? ` · 📂 ${cheminCatalogue}` : ''}`, 'var(--primary)');
       ok++;
     } catch(e) {
@@ -5313,6 +5442,7 @@ async function startBulkSchemaImport(fileList) {
   if(ok > 0) addLog('N\'oublie pas : chaque schéma importé n\'a encore aucune zone cliquable — ouvre-le pour les dessiner.', 'var(--text2)');
 
   if(ok > 0) {
+    markSchemasDirty(createdIds);
     save();
     renderAdminSchemaList();
     renderSchemaHint();
@@ -5479,6 +5609,7 @@ async function fixExistingHotspotsToCircles() {
 
   const HOTSPOT_RADIUS_RATIO = 0.03;
   let fixed = 0, failed = 0;
+  const touchedSchemaIds = [];
 
   for(const schema of (DB.schemas || [])) {
     if(!schema.hotspots || !schema.hotspots.length) continue;
@@ -5503,8 +5634,10 @@ async function fixExistingHotspotsToCircles() {
       h.h = hPct;
       fixed++;
     });
+    touchedSchemaIds.push(schema.id);
   }
 
+  markSchemasDirty(touchedSchemaIds);
   save();
   showNotif('⚪', 'Zones converties', `${fixed} zone(s) transformée(s) en cercle(s)${failed ? `, ${failed} échec(s) (image inaccessible)` : ''}`);
 }
@@ -5517,6 +5650,7 @@ function uppercaseExistingSchemaTexts() {
   const schemas = DB.schemas || [];
   if(!schemas.length) { alert('Aucun schéma existant à harmoniser.'); return; }
   let touched = 0;
+  const touchedIds = [];
   schemas.forEach(s => {
     const titreMaj = (s.titre || '').toUpperCase();
     const cheminMaj = (s.cheminCatalogue || '').toUpperCase();
@@ -5524,9 +5658,11 @@ function uppercaseExistingSchemaTexts() {
       s.titre = titreMaj;
       s.cheminCatalogue = cheminMaj;
       touched++;
+      touchedIds.push(s.id);
     }
   });
   if(!touched) { alert('✅ Tous les schémas sont déjà en majuscules.'); return; }
+  markSchemasDirty(touchedIds);
   save();
   renderAdminSchemaList();
   if(currentView === 'schemas') renderSchemasPage();
@@ -5705,8 +5841,13 @@ async function saveSchema() {
   } else {
     data.id = 's' + Date.now() + Math.random().toString(36).slice(2,6);
     if(!DB.schemas) DB.schemas = [];
+    // Nouveau schéma -> va à la fin de son organe par défaut (ordre le plus
+    // élevé + 1 parmi les schémas déjà présents dans cet organe).
+    const maxOrdre = DB.schemas.filter(s => s.categorie === categorie).reduce((m,s) => Math.max(m, s.ordre||0), 0);
+    data.ordre = maxOrdre + 1;
     DB.schemas.push(data);
   }
+  markSchemaDirty(data.id || schemaEditingId);
   save();
   saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer';
   closeModal('modal-schema-editor');
@@ -5720,6 +5861,7 @@ function deleteCurrentSchema() {
   if(!confirm('Supprimer définitivement ce schéma ? Cette action ne peut pas être annulée depuis l\'application.')) return;
   DB.schemas = (DB.schemas || []).filter(s => s.id !== schemaEditingId);
   save();
+  if(window.fbDeleteSchema) window.fbDeleteSchema(schemaEditingId);
   closeModal('modal-schema-editor');
   renderSchemaHint();
   if(currentView === 'schemas') renderSchemasPage();
@@ -5922,10 +6064,11 @@ function deleteArticle(id) {
   // les schémas où elle était reliée (cliquable pour rien), et fausserait le
   // compte d'articles affiché sur les kits qui la contenaient.
   let schemasTouched = 0, kitsTouched = 0;
+  const touchedSchemaIds = [];
   (DB.schemas || []).forEach(s => {
     const before = (s.hotspots || []).length;
     s.hotspots = (s.hotspots || []).filter(h => h.articleId !== id);
-    if(s.hotspots.length !== before) schemasTouched++;
+    if(s.hotspots.length !== before) { schemasTouched++; touchedSchemaIds.push(s.id); }
   });
   (DB.kits || []).forEach(k => {
     const before = (k.articles || []).length;
@@ -5933,6 +6076,7 @@ function deleteArticle(id) {
     if(k.articles.length !== before) kitsTouched++;
   });
 
+  if(touchedSchemaIds.length) markSchemasDirty(touchedSchemaIds);
   save();
   if(window.fbDeleteArticle) window.fbDeleteArticle(id); // supprime aussi de la collection bpm_articles
   if(a && window.fbReleaseSAP) window.fbReleaseSAP(a.sap); // libère la référence SAP, redevient disponible
@@ -6951,6 +7095,7 @@ function renderSchemasPage() {
   const knownCategories = DB.settings.categories || [];
   const byOrgane = {};
   schemas.forEach(s => { (byOrgane[s.categorie] = byOrgane[s.categorie] || []).push(s); });
+  Object.keys(byOrgane).forEach(c => { byOrgane[c] = sortSchemasByOrdre(byOrgane[c]); });
   let orderedKeys = [
     ...knownCategories.filter(c => byOrgane[c]),
     ...Object.keys(byOrgane).filter(c => !knownCategories.includes(c))
@@ -7013,6 +7158,7 @@ function renderAdminSchemaList() {
   const knownCategories = DB.settings.categories || [];
   const byOrgane = {};
   schemas.forEach(s => { (byOrgane[s.categorie] = byOrgane[s.categorie] || []).push(s); });
+  Object.keys(byOrgane).forEach(c => { byOrgane[c] = sortSchemasByOrdre(byOrgane[c]); });
   const orderedKeys = [
     ...knownCategories.filter(c => byOrgane[c]),
     ...Object.keys(byOrgane).filter(c => !knownCategories.includes(c))
@@ -8142,6 +8288,7 @@ function applyReorgCategoryChanges(source) {
 
   let schemasChanged = 0, articlesViaSchema = 0, articlesDirectChanged = 0;
   const touchedArticleIds = new Set();
+  const touchedSchemaIds = [];
 
   // 1) Schémas d'abord — chaque changement d'organe reclasse aussi
   // silencieusement (sans popup, vu que c'est une action groupée assumée)
@@ -8164,6 +8311,7 @@ function applyReorgCategoryChanges(source) {
     });
     s.categorie = newVal;
     schemasChanged++;
+    touchedSchemaIds.push(s.id);
   });
 
   // 2) Pièces choisies individuellement ensuite — un choix explicite ici
@@ -8185,6 +8333,7 @@ function applyReorgCategoryChanges(source) {
   }
 
   markArticlesDirty([...touchedArticleIds]);
+  markSchemasDirty(touchedSchemaIds);
   save();
   filterArticles();
   renderAdminSchemaList();
@@ -8244,6 +8393,35 @@ async function runArticlesMigration() {
   } else {
     const isPermission = result.code === 'permission-denied';
     el.innerHTML = `<span style="color:var(--danger)">🚫 La migration a échoué${isPermission ? ' — permission refusée par les règles de sécurité Firestore' : ''}.</span><br>
+      <span style="font-size:11.5px;color:var(--text3);font-family:var(--font-mono)">${escapeHtml(result.code||'')} ${escapeHtml(result.message||'')}</span>`;
+  }
+}
+
+// Même outil que pour les pièces, pour les schémas. Attribue un champ
+// "ordre" basé sur la position ACTUELLE dans DB.schemas (groupée par
+// organe) avant l'envoi — c'est ce qui préserve les réorganisations déjà
+// faites via les flèches ◀▶, puisqu'une collection Firestore n'a pas
+// d'ordre garanti contrairement à un tableau.
+async function runSchemasMigration() {
+  const el = document.getElementById('schemas-migration-result');
+  if(!window.fbSaveSchemasBatch) { el.innerHTML = '<span style="color:var(--danger)">🚫 Fonction indisponible — vérifie que le fichier est bien à jour.</span>'; return; }
+  const schemas = DB.schemas || [];
+  if(!schemas.length) { el.innerHTML = '<span style="color:var(--text3)">Aucun schéma à migrer.</span>'; return; }
+  if(!confirm(`Copier ${schemas.length} schéma(s) vers le nouveau système de stockage ?\n\nCeci n'efface rien et peut être relancé sans risque.`)) return;
+
+  el.innerHTML = '⏳ Migration en cours…';
+  const ordreByOrgane = {};
+  const withOrdre = schemas.map(s => {
+    if(s.ordre !== undefined) return slimSchemaForSave(s);
+    ordreByOrgane[s.categorie] = (ordreByOrgane[s.categorie] || 0) + 1;
+    return slimSchemaForSave({ ...s, ordre: ordreByOrgane[s.categorie] });
+  });
+  const result = await window.fbSaveSchemasBatch(withOrdre);
+  if(result.ok) {
+    el.innerHTML = `<span style="color:var(--success);font-weight:600">✅ ${schemas.length} schéma(s) copié(s) avec succès. Dis-le-moi pour passer à l'étape 2.</span>`;
+  } else {
+    const isPermission = result.code === 'permission-denied';
+    el.innerHTML = `<span style="color:var(--danger)">🚫 La migration a échoué${isPermission ? ' — permission refusée par les règles de sécurité Firestore (as-tu ajouté la ligne bpm_schemas ?)' : ''}.</span><br>
       <span style="font-size:11.5px;color:var(--text3);font-family:var(--font-mono)">${escapeHtml(result.code||'')} ${escapeHtml(result.message||'')}</span>`;
   }
 }
@@ -8436,22 +8614,37 @@ function renderSettingList(type, renderFn) {
 // toujours l'ordre réel dans DB.schemas, donc on échange directement la
 // position des deux schémas concernés dans le tableau global (peu importe
 // que d'autres schémas d'organes différents soient intercalés entre eux).
+// Depuis que les schémas vivent dans une collection Firestore (plus un
+// tableau dans un seul document), leur ORDRE D'ARRIVÉE n'est plus garanti —
+// une collection n'a pas de notion d'ordre. Chaque schéma porte donc
+// maintenant son propre champ "ordre" (nombre), et c'est CE champ qui
+// pilote l'affichage — on échange les valeurs d'ordre entre les deux
+// schémas concernés plutôt que d'échanger leur position dans un tableau.
 function moveSchemaItem(schemaId, direction) {
   const schema = DB.schemas.find(s => s.id === schemaId);
   if(!schema) return;
-  const sameOrgane = DB.schemas.filter(s => s.categorie === schema.categorie);
+  const sameOrgane = sortSchemasByOrdre(DB.schemas.filter(s => s.categorie === schema.categorie));
   const posInGroup = sameOrgane.findIndex(s => s.id === schemaId);
   const newPosInGroup = posInGroup + direction;
   if(newPosInGroup < 0 || newPosInGroup >= sameOrgane.length) return;
   const otherSchema = sameOrgane[newPosInGroup];
-  const idxA = DB.schemas.findIndex(s => s.id === schema.id);
-  const idxB = DB.schemas.findIndex(s => s.id === otherSchema.id);
-  [DB.schemas[idxA], DB.schemas[idxB]] = [DB.schemas[idxB], DB.schemas[idxA]];
+  const tmp = schema.ordre || 0;
+  schema.ordre = otherSchema.ordre || 0;
+  otherSchema.ordre = tmp;
+  markSchemasDirty([schema.id, otherSchema.id]);
   save();
   if(currentView === 'schemas') renderSchemasPage();
   renderAdminSchemaList();
   const listModal = document.getElementById('modal-schema-list');
   if(listModal && listModal.classList.contains('open')) openSchemaList(schema.categorie);
+}
+
+// Trie par le champ "ordre" — les schémas migrés avant l'introduction de ce
+// champ n'en ont pas encore (undefined traité comme 0) ; ça reste stable et
+// cohérent, juste pas forcément dans l'ordre déjà choisi avant migration
+// pour ceux-là précisément.
+function sortSchemasByOrdre(list) {
+  return [...list].sort((a,b) => (a.ordre||0) - (b.ordre||0));
 }
 
 function moveCategoryItem(index, direction) {
@@ -8606,9 +8799,11 @@ function saveSetting() {
         // orphelin (une valeur qui n'existe plus nulle part dans la liste
         // des catégories).
         let schemasTouched = 0;
-        (DB.schemas || []).forEach(s => { if(s.categorie === oldVal) { s.categorie = newVal; schemasTouched++; } });
+        const touchedSchemaIds = [];
+        (DB.schemas || []).forEach(s => { if(s.categorie === oldVal) { s.categorie = newVal; schemasTouched++; touchedSchemaIds.push(s.id); } });
         DB.settings.categories[editIdxNum] = newVal;
         if(touchedIds.length) markArticlesDirty(touchedIds);
+        if(touchedSchemaIds.length) markSchemasDirty(touchedSchemaIds);
         if(touched > 0 || schemasTouched > 0) showNotif('📂', 'Catégorie renommée', `${touched} pièce(s) et ${schemasTouched} schéma(s) mis à jour (${oldVal} → ${newVal})`);
       }
     } else if(type === 'fournisseurs') {
