@@ -1145,6 +1145,14 @@
                 <button class="btn btn-outline btn-sm" onclick="clearCartsSection()">🛒 Paniers</button>
               </div>
             </div>
+            <div style="margin-top:16px;padding-top:16px;border-top:2px solid var(--amber)">
+              <div style="font-size:12.5px;font-weight:700;color:var(--amber-dark);margin-bottom:6px">🚧 Restructuration en cours — étape 1 : migration des pièces</div>
+              <p style="font-size:12.5px;color:var(--text2);margin-bottom:10px">
+                Copie tes pièces actuelles vers un nouveau système de stockage (une pièce = un petit document séparé, au lieu de toutes entassées dans le document unique de 1 Mo). Sans danger : n'efface rien, peut être relancé plusieurs fois sans problème. Une fois que ce sera confirmé, je basculerai l'appli dessus dans un second temps.
+              </p>
+              <button class="btn btn-outline" onclick="runArticlesMigration()">🚀 Lancer la migration des pièces</button>
+              <div id="articles-migration-result" style="margin-top:10px;font-size:13px"></div>
+            </div>
           </div>
         </div>
 
@@ -1921,7 +1929,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
     getFirestore, doc, getDoc, getDocFromServer, setDoc, updateDoc, arrayUnion, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
-    collection, getDocs,
+    collection, getDocs, writeBatch,
     enableIndexedDbPersistence
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import {
@@ -1990,6 +1998,14 @@
   //   (voir window.startFullDataSync, appelé depuis doLogin/tryAutoLogin).
   const AUTH_DOC = doc(fsdb, 'bpm', 'auth');
   const DATA_DOC = doc(fsdb, 'bpm', 'database');
+  // NOUVEAU (restructuration anti-limite-1-Mo) : les pièces ne vivent plus
+  // DANS le document bpm/database (elles en représentaient 79% du poids,
+  // ce qui a fait dépasser la limite de 1 Mo par document que Firestore
+  // impose). Chaque pièce devient son propre petit document, rangé dans
+  // cette collection à part — plus aucune limite globale sur le nombre de
+  // pièces, seulement la limite (1 Mo) par pièce individuelle, totalement
+  // hors d'atteinte pour une seule fiche article.
+  const ARTICLES_COL = collection(fsdb, 'bpm_articles');
 
   // Écriture CIBLÉE du panier d'un seul utilisateur (updateDoc avec un champ
   // en notation pointée "carts.<uid>"), plutôt que de passer par l'envoi de
@@ -2130,6 +2146,99 @@
   // qu'un visiteur qui rouvrirait l'app sans se reconnecter n'y ait plus accès.
   window.stopFullDataSync = function() {
     if (dataUnsub) { dataUnsub(); dataUnsub = null; }
+  };
+
+  // ---- Collection des pièces (bpm_articles) ----
+  // Synchronisation en temps réel de la collection entière — comme pour
+  // bpm/database, démarrée uniquement après connexion. onSnapshot renvoie
+  // TOUS les documents de la collection à chaque changement (ajout,
+  // modification, suppression de n'importe quelle pièce, par n'importe
+  // quel appareil connecté) ; contrairement au document unique d'avant, une
+  // seule pièce éditée ne fait plus voyager les 2500+ autres.
+  let articlesUnsub = null;
+  window.startArticlesSync = function() {
+    if (articlesUnsub) return;
+    articlesUnsub = onSnapshot(ARTICLES_COL, (snap) => {
+      const arts = [];
+      snap.forEach(d => arts.push(d.data()));
+      window.applyRemoteArticles(arts);
+    }, (err) => {
+      console.warn('Erreur de synchronisation des pièces:', err);
+    });
+  };
+  window.stopArticlesSync = function() {
+    if (articlesUnsub) { articlesUnsub(); articlesUnsub = null; }
+  };
+
+  // Écriture ciblée d'UNE SEULE pièce (création ou modification) — utilisée
+  // partout où l'appli modifiait auparavant DB.articles puis appelait
+  // save() (qui réécrivait tout le document de 2500+ pièces pour un seul
+  // changement). Immédiate (pas de debounce) : une pièce, c'est petit, pas
+  // besoin d'attendre/regrouper comme pour l'ancien gros document.
+  window.fbSaveArticle = async function(article) {
+    try {
+      await setDoc(doc(fsdb, 'bpm_articles', article.id), article);
+      return true;
+    } catch(e) {
+      console.warn('Sauvegarde de la pièce échouée:', e);
+      return false;
+    }
+  };
+
+  window.fbDeleteArticle = async function(articleId) {
+    try {
+      await deleteDoc(doc(fsdb, 'bpm_articles', articleId));
+      return true;
+    } catch(e) {
+      console.warn('Suppression de la pièce échouée:', e);
+      return false;
+    }
+  };
+
+  // Écriture groupée — pour les imports/corrections en masse, qui touchent
+  // souvent des centaines de pièces d'un coup. Un batch Firestore est
+  // limité à 500 opérations : on découpe automatiquement en plusieurs
+  // batches si la liste est plus longue.
+  window.fbSaveArticlesBatch = async function(articles) {
+    if (!articles.length) return true;
+    const chunks = [];
+    for (let i = 0; i < articles.length; i += 450) chunks.push(articles.slice(i, i + 450));
+    try {
+      for (const chunk of chunks) {
+        const batch = writeBatch(fsdb);
+        chunk.forEach(a => batch.set(doc(fsdb, 'bpm_articles', a.id), a));
+        await batch.commit();
+      }
+      return true;
+    } catch(e) {
+      console.warn('Écriture groupée des pièces échouée:', e);
+      return false;
+    }
+  };
+
+  window.fbDeleteArticlesBatch = async function(articleIds) {
+    if (!articleIds.length) return true;
+    const chunks = [];
+    for (let i = 0; i < articleIds.length; i += 450) chunks.push(articleIds.slice(i, i + 450));
+    try {
+      for (const chunk of chunks) {
+        const batch = writeBatch(fsdb);
+        chunk.forEach(id => batch.delete(doc(fsdb, 'bpm_articles', id)));
+        await batch.commit();
+      }
+      return true;
+    } catch(e) {
+      console.warn('Suppression groupée des pièces échouée:', e);
+      return false;
+    }
+  };
+
+  // Outil de migration (à usage unique) : recopie DB.articles — encore
+  // présent dans l'ancien document bpm/database au moment de la bascule —
+  // vers la nouvelle collection bpm_articles. Peut être relancé sans danger
+  // (écrase avec les mêmes données si on le relance par erreur).
+  window.fbMigrateArticlesToCollection = async function(articles) {
+    return window.fbSaveArticlesBatch(articles);
   };
 
   // Écriture "débattue" (debounced) du document complet. Ne fait rien tant
@@ -2659,6 +2768,25 @@ window.pushLocalAuthToFirestore = function() {
 // Appelé par le module Firebase à chaque mise à jour reçue du serveur pour
 // le document complet (bpm/database) — UNIQUEMENT après une connexion
 // réussie (que ce soit depuis cet appareil ou un autre appareil connecté).
+// NOUVEAU (étape 2 de la restructuration — pas encore branché automatiquement) :
+// reçoit les pièces depuis la nouvelle collection bpm_articles. Une fois
+// activé (voir startArticlesSync), cette fonction remplace la ligne
+// "if(data.articles) DB.articles = data.articles" ci-dessus comme unique
+// source de vérité pour DB.articles.
+window.applyRemoteArticles = function(articles) {
+  applyingRemote = true;
+  try {
+    DB.articles = articles;
+    if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
+    const modalOpen = document.querySelector('.modal.open, .modal-overlay.open');
+    if (!modalOpen && document.getElementById('app').style.display !== 'none' && typeof currentView !== 'undefined' && currentView === 'catalog') {
+      try { filterArticles(); } catch(e) {}
+    }
+  } finally {
+    applyingRemote = false;
+  }
+};
+
 window.applyRemoteData = function(data) {
   applyingRemote = true;
   try {
@@ -8029,6 +8157,25 @@ function clearDbSection(key, label) {
   if(key === 'notifications') updateBadges();
   showNotif('🧹', 'Historique vidé', `${label} (${count} entrée(s) supprimée(s))`);
   checkDatabaseSize();
+}
+
+// Étape 1 de la restructuration : copie DB.articles (encore chargé de la
+// façon habituelle à ce stade) vers la nouvelle collection bpm_articles.
+// Sans danger et rejouable — ne touche à rien d'autre, ne modifie aucun
+// comportement de l'appli tant que l'étape 2 n'a pas été activée.
+async function runArticlesMigration() {
+  const el = document.getElementById('articles-migration-result');
+  if(!window.fbSaveArticlesBatch) { el.innerHTML = '<span style="color:var(--danger)">🚫 Fonction indisponible — vérifie que le fichier est bien à jour.</span>'; return; }
+  if(!DB.articles.length) { el.innerHTML = '<span style="color:var(--text3)">Aucune pièce à migrer.</span>'; return; }
+  if(!confirm(`Copier ${DB.articles.length} pièce(s) vers le nouveau système de stockage ?\n\nCeci n'efface rien et peut être relancé sans risque.`)) return;
+
+  el.innerHTML = '⏳ Migration en cours…';
+  const ok = await window.fbSaveArticlesBatch(DB.articles);
+  if(ok) {
+    el.innerHTML = `<span style="color:var(--success);font-weight:600">✅ ${DB.articles.length} pièce(s) copiée(s) avec succès. Dis-le-moi pour passer à l'étape 2.</span>`;
+  } else {
+    el.innerHTML = '<span style="color:var(--danger)">🚫 La migration a échoué (connexion instable ?). Réessaie.</span>';
+  }
 }
 
 function checkDatabaseSize() {
