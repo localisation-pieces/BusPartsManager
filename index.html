@@ -1126,6 +1126,17 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">📏 Taille de la base de données</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Toutes les données de l'appli (pièces, schémas, commandes, historique...) sont stockées dans un seul document Firestore, plafonné à <strong>1 Mo</strong>. Vérifie régulièrement où tu en es pour anticiper avant d'atteindre la limite.
+            </p>
+            <button class="btn btn-outline" onclick="checkDatabaseSize()">📏 Vérifier la taille actuelle</button>
+            <div id="db-size-result" style="margin-top:14px"></div>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">🔗 Fusionner deux pièces en doublon</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
@@ -1142,6 +1153,20 @@
               </div>
             </div>
             <button class="btn btn-outline" onclick="mergeDuplicateArticles()">🔗 Fusionner ces deux pièces</button>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <div class="admin-section-header">🔀 Réorganiser une catégorie (schémas + pièces)</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+              Pratique pour séparer une catégorie en plusieurs organes (ex: "Vitres + carrosserie" → "Vitres" et "Carrosserie") — choisis une catégorie de départ, un menu déroulant apparaît à côté de chaque schéma et de chaque pièce pour choisir sa nouvelle destination, puis applique tout d'un coup au lieu d'ouvrir chaque fiche une par une.
+            </p>
+            <div class="form-group" style="max-width:340px">
+              <label>Catégorie à réorganiser</label>
+              <select id="reorg-source-categorie" onchange="renderReorgCategoryTool()"><option value="">— Choisir —</option></select>
+            </div>
+            <div id="reorg-category-body"></div>
           </div>
         </div>
       </div>
@@ -6770,6 +6795,17 @@ function renderAdminSchemaList() {
 }
 
 function renderAdmin(skipFreshFetch) {
+  // Liste des catégories pour l'outil de réorganisation — préserve la
+  // sélection en cours si elle existe déjà, pour ne pas perdre le travail
+  // en cours en cas de rafraîchissement de la page (ex: nouvelle demande
+  // d'inscription arrivée en direct).
+  const reorgSel = document.getElementById('reorg-source-categorie');
+  if(reorgSel) {
+    const currentReorgVal = reorgSel.value;
+    reorgSel.innerHTML = '<option value="">— Choisir —</option>' + (DB.settings.categories||[]).map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    if(currentReorgVal) reorgSel.value = currentReorgVal;
+  }
+
   // Récupère les utilisateurs directement depuis le serveur à chaque
   // ouverture de cette page — plus fiable que d'attendre l'écouteur en
   // direct, et garantit que les demandes d'inscription en attente sont
@@ -7783,6 +7819,157 @@ function mergeDuplicateArticles() {
   showNotif('🔗', 'Fusion terminée', `${schemaCount} schéma(s), ${kitCount} kit(s), ${orderCount} commande(s) mis à jour · SAP ${sapRemove} ajouté en mot-clé sur ${sapKeep}`);
 }
 
+// Outil de réorganisation en masse : pour séparer une catégorie en
+// plusieurs organes (ex: "Vitres + carrosserie" -> "Vitres" et
+// "Carrosserie") sans devoir ouvrir chaque schéma et chaque pièce un par un.
+// Affiche tous les schémas ET toutes les pièces de la catégorie choisie,
+// chacun avec un menu déroulant pour indiquer sa nouvelle destination — le
+// choix par défaut ("aucun changement") laisse l'élément tel quel.
+function renderReorgCategoryTool() {
+  const source = document.getElementById('reorg-source-categorie').value;
+  const body = document.getElementById('reorg-category-body');
+  if(!source) { body.innerHTML = ''; return; }
+
+  const categories = DB.settings.categories || [];
+  const options = (currentVal) => categories.map(c =>
+    `<option value="${escapeHtml(c)}"${c===currentVal?' selected':''}>${c===source?'— Ne pas changer —':escapeHtml(c)}</option>`
+  ).join('');
+
+  const schemas = (DB.schemas || []).filter(s => s.categorie === source);
+  const articles = DB.articles.filter(a => a.categorie === source);
+
+  if(!schemas.length && !articles.length) {
+    body.innerHTML = `<p style="font-size:13px;color:var(--text3);margin-top:14px">Aucun schéma ni pièce n'est actuellement classé dans "${escapeHtml(source)}".</p>`;
+    return;
+  }
+
+  body.innerHTML = `
+    ${schemas.length ? `
+      <div style="margin-top:16px">
+        <div style="font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:8px">📐 Schémas (${schemas.length})</div>
+        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+          ${schemas.map((s,i) => `
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;${i>0?'border-top:1px solid var(--border)':''}">
+              <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--surface2);flex-shrink:0">
+                <img src="${cloudinaryOptimized(s.image,'w_100')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">
+              </div>
+              <div style="flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.titre)}</div>
+              <select id="reorg-schema-${s.id}" style="font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface)">${options(source)}</select>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
+    ${articles.length ? `
+      <div style="margin-top:16px">
+        <div style="font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:8px">🔧 Pièces classées directement dans cet organe (${articles.length})</div>
+        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)">
+          ${articles.map((a,i) => `
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;${i>0?'border-top:1px solid var(--border)':''}">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(a.desc)}</div>
+                <div style="font-size:11px;color:var(--text3)">SAP ${escapeHtml(a.sap)}</div>
+              </div>
+              <select id="reorg-article-${a.id}" style="font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface)">${options(source)}</select>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
+    <button class="btn btn-primary" style="margin-top:16px" onclick="applyReorgCategoryChanges('${source.replace(/'/g,"\\'")}')">✅ Appliquer les changements</button>`;
+}
+
+function applyReorgCategoryChanges(source) {
+  const schemas = (DB.schemas || []).filter(s => s.categorie === source);
+  const articlesDirect = DB.articles.filter(a => a.categorie === source);
+
+  let schemasChanged = 0, articlesViaSchema = 0, articlesDirectChanged = 0;
+
+  // 1) Schémas d'abord — chaque changement d'organe reclasse aussi
+  // silencieusement (sans popup, vu que c'est une action groupée assumée)
+  // les pièces reliées qui étaient encore dans l'ancien organe.
+  schemas.forEach(s => {
+    const sel = document.getElementById('reorg-schema-' + s.id);
+    if(!sel) return;
+    const newVal = sel.value;
+    if(newVal === source) return; // "Ne pas changer"
+    (s.hotspots || []).forEach(h => {
+      if(!h.articleId) return;
+      const a = DB.articles.find(x => x.id === h.articleId);
+      if(!a) return;
+      if(a.categorie === source) { a.categorie = newVal; articlesViaSchema++; }
+      else if(a.categoriesSecondaires && a.categoriesSecondaires.includes(source)) {
+        a.categoriesSecondaires = a.categoriesSecondaires.map(c => c === source ? newVal : c);
+        articlesViaSchema++;
+      }
+    });
+    s.categorie = newVal;
+    schemasChanged++;
+  });
+
+  // 2) Pièces choisies individuellement ensuite — un choix explicite ici
+  // l'emporte toujours sur ce que le reclassement automatique des schémas
+  // aurait pu déjà appliquer à la même pièce juste au-dessus.
+  articlesDirect.forEach(a => {
+    const sel = document.getElementById('reorg-article-' + a.id);
+    if(!sel) return;
+    const newVal = sel.value;
+    if(newVal === source) return; // "Ne pas changer"
+    a.categorie = newVal;
+    articlesDirectChanged++;
+  });
+
+  if(!schemasChanged && !articlesDirectChanged) {
+    alert('Aucun changement sélectionné (tout est resté sur "Ne pas changer").');
+    return;
+  }
+
+  save();
+  filterArticles();
+  renderAdminSchemaList();
+  if(currentView === 'schemas') renderSchemasPage();
+  document.getElementById('reorg-category-body').innerHTML = '';
+  document.getElementById('reorg-source-categorie').value = '';
+  showNotif('🔀', 'Réorganisation terminée', `${schemasChanged} schéma(s), ${articlesViaSchema} pièce(s) via schéma, ${articlesDirectChanged} pièce(s) directement`);
+}
+
+// Mesure la taille réelle de ce qui est envoyé à Firestore à chaque save()
+// — reproduit exactement la même exclusion (DB.users, géré à part) pour que
+// le chiffre affiché corresponde vraiment au document plafonné à 1 Mo,
+// avec un détail par section pour repérer ce qui pèse le plus lourd.
+function checkDatabaseSize() {
+  const { users, ...dbWithoutUsers } = DB;
+  const fullJSON = JSON.stringify(dbWithoutUsers);
+  const totalBytes = new Blob([fullJSON]).size;
+  const LIMIT = 1048576; // 1 Mo, limite Firestore par document
+  const pct = Math.min(100, Math.round((totalBytes / LIMIT) * 1000) / 10);
+
+  const sections = ['articles','orders','kits','tools','loans','notifications','messages','activity','stockMovements','carts','schemas','settings'];
+  const breakdown = sections.map(key => {
+    const size = DB[key] !== undefined ? new Blob([JSON.stringify(DB[key])]).size : 0;
+    return { key, size };
+  }).sort((a,b) => b.size - a.size).filter(s => s.size > 0);
+
+  const fmtSize = (b) => b >= 1024*1024 ? (b/1024/1024).toFixed(2) + ' Mo' : b >= 1024 ? (b/1024).toFixed(1) + ' Ko' : b + ' o';
+
+  const barColor = pct >= 85 ? 'var(--danger)' : pct >= 60 ? 'var(--amber)' : 'var(--success)';
+  const statusMsg = pct >= 85
+    ? '⚠️ Attention, tu approches vraiment de la limite — les prochains enregistrements risquent d\'échouer bientôt. Il faudra envisager de séparer certaines données dans des documents/collections distincts.'
+    : pct >= 60
+    ? '🟡 Encore de la marge, mais à surveiller de temps en temps — ça vaut le coup d\'y repenser avant que ça devienne urgent.'
+    : '✅ Large marge pour l\'instant, rien à faire de particulier.';
+
+  document.getElementById('db-size-result').innerHTML = `
+    <div style="padding:14px 16px;background:var(--surface2);border-radius:var(--radius)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+        <span style="font-size:20px;font-weight:800">${fmtSize(totalBytes)}</span>
+        <span style="font-size:13px;color:var(--text2)">sur 1 Mo (${pct}%)</span>
+      </div>
+      <div style="height:10px;background:var(--surface3);border-radius:99px;overflow:hidden;margin-bottom:12px">
+        <div style="height:100%;width:${Math.min(100,pct)}%;background:${barColor};border-radius:99px"></div>
+      </div>
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">${statusMsg}</p>
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Répartition par section :</div>
+      ${breakdown.map(s => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--border)"><span>${s.key} ${s.key==='articles'?`(${DB.articles.length})`:s.key==='schemas'?`(${(DB.schemas||[]).length})`:s.key==='orders'?`(${DB.orders.length})`:''}</span><strong>${fmtSize(s.size)}</strong></div>`).join('')}
+    </div>`;
+}
+
 function fixMissingMagasin() {
   const targetCode = '2K';
   const toFix = DB.articles.filter(a => !a.magasin || !a.magasin.trim());
@@ -8080,8 +8267,14 @@ function saveSetting() {
           }
           if(changed) touched++;
         });
+        // Les schémas n'étaient pas suivis ici auparavant — un schéma
+        // gardait l'ancien nom d'organe même après renommage, devenant
+        // orphelin (une valeur qui n'existe plus nulle part dans la liste
+        // des catégories).
+        let schemasTouched = 0;
+        (DB.schemas || []).forEach(s => { if(s.categorie === oldVal) { s.categorie = newVal; schemasTouched++; } });
         DB.settings.categories[editIdxNum] = newVal;
-        if(touched > 0) showNotif('📂', 'Catégorie renommée', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
+        if(touched > 0 || schemasTouched > 0) showNotif('📂', 'Catégorie renommée', `${touched} pièce(s) et ${schemasTouched} schéma(s) mis à jour (${oldVal} → ${newVal})`);
       }
     } else if(type === 'fournisseurs') {
       // Même logique que les catégories : sinon le fournisseur renommé
