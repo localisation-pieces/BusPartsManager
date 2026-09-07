@@ -2809,13 +2809,10 @@ function save() {
     // entier, donc un champ absent ici disparaît bien du document — exactement
     // l'effet recherché, plus jamais de pièces dans bpm/database.
     delete dbWithoutUsers.articles;
-    // Même traitement prévu pour les schémas (perte constatée le
-    // 06/09/2026), mais PAS ENCORE actif ici — le double-écrit (ancien
-    // document + nouvelle collection bpm_schemas via markSchemaDirty) reste
-    // volontairement en place tant que la migration n'est pas confirmée,
-    // pour ne jamais se retrouver sans AUCUNE copie pendant la transition.
-    // Sera retiré (delete comme pour articles) à l'étape 2.
-    dbWithoutUsers.schemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
+    // ÉTAPE 2 confirmée : les schémas ne sont plus envoyés ici non plus —
+    // même traitement que les pièces, désormais dans leur propre collection
+    // (bpm_schemas, voir markSchemaDirty/flushDirtySchemas).
+    delete dbWithoutUsers.schemas;
     window.fbSaveData(dbWithoutUsers);
   }
   // IMPORTANT : le document des utilisateurs (bpm/auth) n'est PLUS sauvegardé
@@ -2959,12 +2956,8 @@ window.applyRemoteData = function(data) {
     if(data.activity) DB.activity = data.activity;
     if(data.stockMovements) DB.stockMovements = data.stockMovements;
     if(data.carts) DB.carts = data.carts;
-    // Restructuration schémas — ÉTAPE 1 seulement pour l'instant : encore lu
-    // ici depuis l'ancien document, le temps de confirmer que la migration
-    // vers bpm_schemas (voir runSchemasMigration) s'est bien passée. Sera
-    // retiré à l'étape 2, une fois confirmé (même prudence que pour les
-    // pièces).
-    if(data.schemas) DB.schemas = data.schemas;
+    // ÉTAPE 2 confirmée : DB.schemas n'est plus lu ici — voir
+    // applyRemoteSchemas, alimenté par la collection bpm_schemas.
     if(data.settings) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
@@ -3427,7 +3420,7 @@ async function doLogin() {
   restoreCachedFullDataIfAny();
   window.startFullDataSync && window.startFullDataSync();
   window.startArticlesSync && window.startArticlesSync();
-  // ÉTAPE 2 pas encore activée : window.startSchemasSync() (en attente de confirmation migration)
+  window.startSchemasSync && window.startSchemasSync();
   startApp();
 }
 
@@ -3441,7 +3434,7 @@ function doLogout() {
   window.stopFullDataSync && window.stopFullDataSync();
   window.stopArticlesSync && window.stopArticlesSync();
   DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = []; DB.schemas = [];
-  // window.stopSchemasSync() sera activé avec l'étape 2
+  window.stopSchemasSync && window.stopSchemasSync();
   DB.notifications = []; DB.messages = []; DB.activity = []; DB.stockMovements = [];
   fullDataLoaded = false;
   try { localStorage.removeItem('bpm_db'); } catch(e){}
@@ -3491,7 +3484,7 @@ window.tryAutoLogin = function() {
       restoreCachedFullDataIfAny();
       window.startFullDataSync && window.startFullDataSync();
       window.startArticlesSync && window.startArticlesSync();
-      // window.startSchemasSync() sera activé avec l'étape 2
+      window.startSchemasSync && window.startSchemasSync();
       startApp();
       resolve(true);
     });
@@ -8428,27 +8421,27 @@ async function runSchemasMigration() {
 
 function checkDatabaseSize() {
   const { users, ...dbWithoutUsers } = DB;
-  // ÉTAPE 2 : les pièces ne comptent PLUS dans la limite de 1 Mo — elles
-  // vivent dans leur propre collection (bpm_articles), un document par
-  // pièce, chacun individuellement minuscule. On les exclut donc du calcul
-  // du document principal, et on les affiche à part, à titre informatif.
+  // ÉTAPE 2 : ni les pièces ni les schémas ne comptent plus dans la limite
+  // de 1 Mo — chacun vit dans sa propre collection (bpm_articles /
+  // bpm_schemas), un document par élément, chacun individuellement minuscule.
   const slimArticles = (DB.articles || []).map(slimArticleForSave);
-  const slimSchemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
-  const { articles: _omit, ...dbForMeasure } = { ...dbWithoutUsers, schemas: slimSchemas };
+  const slimSchemas = (DB.schemas || []).map(slimSchemaForSave);
+  const { articles: _omitA, schemas: _omitS, ...dbForMeasure } = dbWithoutUsers;
   const fullJSON = JSON.stringify(dbForMeasure);
   const totalBytes = new Blob([fullJSON]).size;
   const LIMIT = 1048576; // 1 Mo, limite Firestore par document
   const pct = Math.min(100, Math.round((totalBytes / LIMIT) * 1000) / 10);
 
-  const sections = ['orders','kits','tools','loans','notifications','messages','activity','stockMovements','carts','schemas','settings'];
+  const sections = ['orders','kits','tools','loans','notifications','messages','activity','stockMovements','carts','settings'];
   const breakdown = sections.map(key => {
-    const source = key === 'schemas' ? slimSchemas : DB[key];
-    const size = source !== undefined ? new Blob([JSON.stringify(source)]).size : 0;
+    const size = DB[key] !== undefined ? new Blob([JSON.stringify(DB[key])]).size : 0;
     return { key, size };
   }).sort((a,b) => b.size - a.size).filter(s => s.size > 0);
 
   const articlesTotalBytes = new Blob([JSON.stringify(slimArticles)]).size;
   const articlesAvgBytes = slimArticles.length ? Math.round(articlesTotalBytes / slimArticles.length) : 0;
+  const schemasTotalBytes = new Blob([JSON.stringify(slimSchemas)]).size;
+  const schemasAvgBytes = slimSchemas.length ? Math.round(schemasTotalBytes / slimSchemas.length) : 0;
 
   const fmtSize = (b) => b >= 1024*1024 ? (b/1024/1024).toFixed(2) + ' Mo' : b >= 1024 ? (b/1024).toFixed(1) + ' Ko' : b + ' o';
 
@@ -8471,12 +8464,16 @@ function checkDatabaseSize() {
       </div>
       <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">${statusMsg}</p>
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Répartition par section :</div>
-      ${breakdown.map(s => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--border)"><span>${s.key}${s.key==='schemas'?` (${(DB.schemas||[]).length})`:s.key==='orders'?` (${DB.orders.length})`:''}</span><strong>${fmtSize(s.size)}</strong></div>`).join('')}
+      ${breakdown.map(s => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--border)"><span>${s.key}${s.key==='orders'?` (${DB.orders.length})`:''}</span><strong>${fmtSize(s.size)}</strong></div>`).join('')}
     </div>
-    <div style="padding:14px 16px;background:var(--primary-light,#eef4ff);border-radius:var(--radius)">
+    <div style="padding:14px 16px;background:var(--primary-light,#eef4ff);border-radius:var(--radius);margin-bottom:12px">
       <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📦 Pièces (collection bpm_articles — plus de limite de 1 Mo globale)</div>
       <div style="font-size:13px;color:var(--text)">${slimArticles.length} pièce(s) · ${fmtSize(articlesTotalBytes)} au total · ~${articlesAvgBytes} o en moyenne par pièce</div>
-      <p style="font-size:12px;color:var(--text2);margin-top:6px">Chaque pièce est son propre petit document — la limite de 1 Mo s'applique par pièce individuelle, jamais atteignable en pratique. Le nombre de pièces peut désormais grandir sans plafond.</p>
+    </div>
+    <div style="padding:14px 16px;background:var(--amber-light);border-radius:var(--radius)">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📐 Schémas (collection bpm_schemas — plus de limite de 1 Mo globale)</div>
+      <div style="font-size:13px;color:var(--text)">${slimSchemas.length} schéma(s) · ${fmtSize(schemasTotalBytes)} au total · ~${schemasAvgBytes} o en moyenne par schéma</div>
+      <p style="font-size:12px;color:var(--text2);margin-top:6px">Comme les pièces, chaque schéma est désormais son propre petit document — plus aucun plafond global sur le nombre de schémas.</p>
     </div>`;
 }
 
