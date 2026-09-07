@@ -2499,6 +2499,37 @@ let currentPhotoUrl = '';      // URL (ou ancien base64) de la photo actuelle de
 
 let applyingRemote = false; // évite de renvoyer en boucle les données qu'on vient de recevoir
 
+// Retire les champs vides/par défaut avant l'envoi à Firestore — voir
+// commentaire dans save(). Ne touche jamais l'objet original (copie).
+function slimArticleForSave(a) {
+  const s = { ...a };
+  if(!s.photoRotation) delete s.photoRotation;
+  if(!s.alerte) delete s.alerte;
+  if(!s.qtyIntervention) delete s.qtyIntervention;
+  if(!s.keywords) delete s.keywords;
+  if(!s.fournisseurRef) delete s.fournisseurRef;
+  if(s.categoriesSecondaires && !s.categoriesSecondaires.length) delete s.categoriesSecondaires;
+  if(s.marquesBus && !s.marquesBus.length) delete s.marquesBus;
+  if(!s.busStandard) delete s.busStandard;
+  if(!s.busArticule) delete s.busArticule;
+  if(!s.serialise) delete s.serialise;
+  if(!s.reparable) delete s.reparable;
+  if(!s.chimique) delete s.chimique;
+  return s;
+}
+
+function slimSchemaForSave(sc) {
+  const s = { ...sc };
+  if(!s.cheminCatalogue) delete s.cheminCatalogue;
+  if(s.hotspots) s.hotspots = s.hotspots.map(h => {
+    const hh = { ...h };
+    if(!hh.notFound) delete hh.notFound;
+    if(!hh.label) delete hh.label;
+    return hh;
+  });
+  return s;
+}
+
 function save() {
   // Cache local instantané (fonctionne hors-ligne, sert de secours) —
   // seulement une fois les données complètes chargées (après connexion),
@@ -2520,6 +2551,16 @@ function save() {
   // source de vérité pour les comptes utilisateurs.
   if (!applyingRemote && window.fbSaveData) {
     const { users, ...dbWithoutUsers } = DB;
+    // Urgent (document déjà à/au-delà de la limite de 1 Mo Firestore) :
+    // retire avant l'envoi les champs vides/par défaut qui n'apportent
+    // aucune information (ex: "alerte":"" sur une pièce qui n'en a pas,
+    // "photoRotation":0 sur une photo jamais pivotée...) — partout dans
+    // l'appli ces champs sont déjà lus avec un "|| valeur par défaut", donc
+    // les retirer quand ils sont vides ne change RIEN à l'affichage, juste
+    // moins d'octets envoyés. Ne modifie jamais DB en mémoire, seulement ce
+    // qui part vers Firestore.
+    dbWithoutUsers.articles = (dbWithoutUsers.articles || []).map(slimArticleForSave);
+    dbWithoutUsers.schemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
     window.fbSaveData(dbWithoutUsers);
   }
   // IMPORTANT : le document des utilisateurs (bpm/auth) n'est PLUS sauvegardé
@@ -6522,6 +6563,22 @@ function requestCancelOrder(orderId) {
 // =============================
 function addNotification(toUserId, title, msg) {
   DB.notifications.push({ id:'n'+Date.now(), to: toUserId, title, msg, read: false, time: Date.now() });
+  // Aucune limite n'existait ici avant — risque de croissance illimitée du
+  // document Firestore. On garde les 150 plus récentes, en retirant les
+  // plus anciennes déjà lues en priorité (les non-lues sont quasi toujours
+  // récentes de toute façon).
+  if(DB.notifications.length > 150) {
+    const read = DB.notifications.filter(n => n.read).sort((a,b) => a.time - b.time);
+    const unread = DB.notifications.filter(n => !n.read);
+    const toRemoveCount = DB.notifications.length - 150;
+    const readToRemove = new Set(read.slice(0, toRemoveCount).map(n => n.id));
+    DB.notifications = DB.notifications.filter(n => !readToRemove.has(n.id));
+    // Si encore trop (beaucoup de non-lues), coupe simplement par ancienneté.
+    if(DB.notifications.length > 150) {
+      DB.notifications.sort((a,b) => a.time - b.time);
+      DB.notifications = DB.notifications.slice(DB.notifications.length - 150);
+    }
+  }
   save();
   updateBadges();
 }
@@ -9763,9 +9820,10 @@ function logStockMovement(articleId, qty, detail) {
     user: currentUser ? currentUser.name : 'Système',
     detail: detail || ''
   });
-  // Limite pour ne pas alourdir indéfiniment le document Firestore
-  if(DB.stockMovements.length > 400) {
-    DB.stockMovements = DB.stockMovements.slice(DB.stockMovements.length - 400);
+  // Limite pour ne pas alourdir indéfiniment le document Firestore —
+  // resserrée (400 -> 200) suite au dépassement de la limite de 1 Mo.
+  if(DB.stockMovements.length > 200) {
+    DB.stockMovements = DB.stockMovements.slice(DB.stockMovements.length - 200);
   }
 }
 
