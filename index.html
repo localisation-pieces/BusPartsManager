@@ -2094,7 +2094,7 @@
       clearTimeout(bootTimer);
       if (snap.exists()) {
         if (!snap.metadata.fromCache) authDataFresh = true;
-        window.applyRemoteAuthData(snap.data());
+        window.applyRemoteAuthData(snap.data(), snap.metadata.fromCache);
       } else if (snap.metadata.fromCache) {
         // CRITIQUE : un cache local vide (ex. fenêtre de navigation privée
         // toute neuve) peut signaler "le document n'existe pas" avant même
@@ -2141,7 +2141,7 @@
     if (dataUnsub) return;
     dataUnsub = onSnapshot(DATA_DOC, (snap) => {
       if (snap.exists()) {
-        window.applyRemoteData(snap.data());
+        window.applyRemoteData(snap.data(), snap.metadata.fromCache);
       } else if (snap.metadata.fromCache) {
         // Même précaution que pour bpm/auth : ne jamais réinitialiser sur la
         // seule foi d'un cache local vide, qui peut signaler à tort "n'existe
@@ -2847,8 +2847,9 @@ function maybeSaveAuthProjection() {
 // aux données complètes. Contient les utilisateurs (avec mot de passe haché,
 // jamais en clair) et les réglages généraux nécessaires à l'écran de
 // connexion/inscription (liste des magasins, marques...).
-window.applyRemoteAuthData = function(data) {
+window.applyRemoteAuthData = function(data, fromCache) {
   if (!data) return;
+  console.log('[DIAG bpm/auth] fromCache=' + fromCache + ' fullDataLoaded=' + fullDataLoaded + ' categories=' + (data.settings && data.settings.categories ? data.settings.categories.length : 'aucun'));
   applyingRemote = true;
   try {
     if (data.users && data.users.length) DB.users = data.users;
@@ -2864,6 +2865,7 @@ window.applyRemoteAuthData = function(data) {
     // temps. On ne l'applique donc plus qu'AVANT la connexion (écran de
     // connexion/inscription), quand bpm/database n'est pas encore chargé.
     if (data.settings && !fullDataLoaded) {
+      console.log('[DIAG bpm/auth] -> ÉCRASE DB.settings avec ' + data.settings.categories.length + ' catégorie(s)');
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
     }
@@ -2938,7 +2940,8 @@ window.applyRemoteSchemas = function(schemas) {
   }
 };
 
-window.applyRemoteData = function(data) {
+window.applyRemoteData = function(data, fromCache) {
+  console.log('[DIAG bpm/database] fromCache=' + fromCache + ' categories=' + (data.settings && data.settings.categories ? data.settings.categories.length : 'aucun'));
   applyingRemote = true;
   try {
     // "users" n'est plus lu depuis bpm/database, même s'il est encore présent
