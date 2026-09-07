@@ -1139,6 +1139,10 @@
                 <button class="btn btn-outline btn-sm" onclick="clearDbSection('stockMovements','les mouvements de stock')">🔄 Mouvements de stock</button>
                 <button class="btn btn-outline btn-sm" onclick="clearDbSection('notifications','les notifications')">🔔 Notifications</button>
                 <button class="btn btn-outline btn-sm" onclick="clearDbSection('activity','le fil d\'activité du tableau de bord')">📢 Activité récente</button>
+                <button class="btn btn-outline btn-sm" onclick="clearDbSection('orders','les commandes')">📦 Commandes</button>
+                <button class="btn btn-outline btn-sm" onclick="clearDbSection('messages','les messages')">💬 Messages</button>
+                <button class="btn btn-outline btn-sm" onclick="clearDbSection('loans','les prêts d\'outillage')">🔑 Prêts outillage</button>
+                <button class="btn btn-outline btn-sm" onclick="clearCartsSection()">🛒 Paniers</button>
               </div>
             </div>
           </div>
@@ -8001,6 +8005,21 @@ function applyReorgCategoryChanges(source) {
 // Vide entièrement une section "journal" (historique) — jamais utilisé pour
 // le catalogue, les schémas, les commandes en cours ou les comptes, qui ont
 // tous leur propre logique de suppression dédiée ailleurs.
+// DB.carts est un objet (une clé par utilisateur), pas une liste — logique
+// à part de clearDbSection qui compte avec .length.
+function clearCartsSection() {
+  const count = Object.keys(DB.carts || {}).length;
+  if(!count) { alert('Rien à vider — aucun panier enregistré.'); return; }
+  if(!confirm(`Vider les paniers de ${count} utilisateur(s) ? Cette action ne peut pas être annulée depuis l'application.`)) return;
+  DB.carts = {};
+  cart = []; // le panier de la session en cours aussi, sinon il resterait affiché puis réécrit au prochain ajout
+  save();
+  saveCart();
+  updateCartBadge();
+  showNotif('🧹', 'Paniers vidés', `${count} panier(s) supprimé(s)`);
+  checkDatabaseSize();
+}
+
 function clearDbSection(key, label) {
   const count = (DB[key] || []).length;
   if(!count) { alert(`Rien à vider — ${label} est déjà vide.`); return; }
