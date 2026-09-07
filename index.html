@@ -2200,7 +2200,7 @@
   // limité à 500 opérations : on découpe automatiquement en plusieurs
   // batches si la liste est plus longue.
   window.fbSaveArticlesBatch = async function(articles) {
-    if (!articles.length) return true;
+    if (!articles.length) return { ok: true };
     const chunks = [];
     for (let i = 0; i < articles.length; i += 450) chunks.push(articles.slice(i, i + 450));
     try {
@@ -2209,10 +2209,10 @@
         chunk.forEach(a => batch.set(doc(fsdb, 'bpm_articles', a.id), a));
         await batch.commit();
       }
-      return true;
+      return { ok: true };
     } catch(e) {
       console.warn('Écriture groupée des pièces échouée:', e);
-      return false;
+      return { ok: false, code: e && e.code, message: e && e.message };
     }
   };
 
@@ -8170,11 +8170,13 @@ async function runArticlesMigration() {
   if(!confirm(`Copier ${DB.articles.length} pièce(s) vers le nouveau système de stockage ?\n\nCeci n'efface rien et peut être relancé sans risque.`)) return;
 
   el.innerHTML = '⏳ Migration en cours…';
-  const ok = await window.fbSaveArticlesBatch(DB.articles);
-  if(ok) {
+  const result = await window.fbSaveArticlesBatch(DB.articles);
+  if(result.ok) {
     el.innerHTML = `<span style="color:var(--success);font-weight:600">✅ ${DB.articles.length} pièce(s) copiée(s) avec succès. Dis-le-moi pour passer à l'étape 2.</span>`;
   } else {
-    el.innerHTML = '<span style="color:var(--danger)">🚫 La migration a échoué (connexion instable ?). Réessaie.</span>';
+    const isPermission = result.code === 'permission-denied';
+    el.innerHTML = `<span style="color:var(--danger)">🚫 La migration a échoué${isPermission ? ' — permission refusée par les règles de sécurité Firestore' : ''}.</span><br>
+      <span style="font-size:11.5px;color:var(--text3);font-family:var(--font-mono)">${escapeHtml(result.code||'')} ${escapeHtml(result.message||'')}</span>`;
   }
 }
 
