@@ -2651,6 +2651,35 @@ function slimSchemaForSave(sc) {
   return s;
 }
 
+// ÉTAPE 2 de la restructuration : chaque endroit de l'appli qui modifie une
+// ou plusieurs pièces appelle markArticleDirty(id) / markArticlesDirty(ids)
+// juste après avoir changé DB.articles — au lieu d'écrire directement vers
+// Firestore à chaque endroit (risque d'en oublier un), tout part vers cette
+// file d'attente unique, vidée automatiquement (regroupée) peu après.
+// Centralise la vraie logique d'écriture en UN seul endroit à vérifier.
+let dirtyArticleIds = new Set();
+let articleFlushTimer = null;
+function markArticleDirty(id) {
+  if(!id) return;
+  dirtyArticleIds.add(id);
+  scheduleArticleFlush();
+}
+function markArticlesDirty(ids) {
+  (ids || []).forEach(id => { if(id) dirtyArticleIds.add(id); });
+  scheduleArticleFlush();
+}
+function scheduleArticleFlush() {
+  if(articleFlushTimer) clearTimeout(articleFlushTimer);
+  articleFlushTimer = setTimeout(flushDirtyArticles, 600);
+}
+async function flushDirtyArticles() {
+  const ids = [...dirtyArticleIds];
+  dirtyArticleIds.clear();
+  if(!ids.length || !window.fbSaveArticlesBatch) return;
+  const toSave = ids.map(id => DB.articles.find(a => a.id === id)).filter(Boolean);
+  if(toSave.length) await window.fbSaveArticlesBatch(toSave);
+}
+
 function save() {
   // Cache local instantané (fonctionne hors-ligne, sert de secours) —
   // seulement une fois les données complètes chargées (après connexion),
@@ -2680,7 +2709,15 @@ function save() {
     // les retirer quand ils sont vides ne change RIEN à l'affichage, juste
     // moins d'octets envoyés. Ne modifie jamais DB en mémoire, seulement ce
     // qui part vers Firestore.
-    dbWithoutUsers.articles = (dbWithoutUsers.articles || []).map(slimArticleForSave);
+    // ÉTAPE 2 (restructuration) : les pièces ne sont PLUS envoyées ici du
+    // tout — elles vivent désormais dans leur propre collection
+    // (bpm_articles, voir markArticleDirty/flushDirtyArticles), qui
+    // représentait à elle seule 79% du poids de ce document et l'avait fait
+    // dépasser la limite de 1 Mo. delete plutôt que de juste ne pas
+    // l'assigner : setDoc(..., {merge:false}) réécrit le document en
+    // entier, donc un champ absent ici disparaît bien du document — exactement
+    // l'effet recherché, plus jamais de pièces dans bpm/database.
+    delete dbWithoutUsers.articles;
     dbWithoutUsers.schemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
     window.fbSaveData(dbWithoutUsers);
   }
@@ -2794,7 +2831,8 @@ window.applyRemoteData = function(data) {
     // (ancienne copie, désormais désactivée à l'écriture) — voir save() pour
     // le détail. bpm/auth (via applyRemoteAuthData) reste la seule source de
     // vérité pour DB.users, à tout moment (avant et après connexion).
-    if(data.articles) DB.articles = data.articles;
+    // ÉTAPE 2 : DB.articles n'est plus lu ici — voir applyRemoteArticles,
+    // alimenté par la nouvelle collection bpm_articles.
     if(data.orders) DB.orders = data.orders;
     if(data.kits) DB.kits = data.kits;
     if(data.tools) DB.tools = data.tools;
@@ -3266,6 +3304,7 @@ async function doLogin() {
   // (catalogue, commandes, prêts, messages...) est chargé.
   restoreCachedFullDataIfAny();
   window.startFullDataSync && window.startFullDataSync();
+  window.startArticlesSync && window.startArticlesSync();
   startApp();
 }
 
@@ -3277,6 +3316,7 @@ function doLogout() {
   // mémoire : un visiteur qui rouvrirait l'app sans se reconnecter ne doit
   // plus y avoir accès (ni au réseau, ni dans les outils de développement).
   window.stopFullDataSync && window.stopFullDataSync();
+  window.stopArticlesSync && window.stopArticlesSync();
   DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = [];
   DB.notifications = []; DB.messages = []; DB.activity = []; DB.stockMovements = [];
   fullDataLoaded = false;
@@ -3326,6 +3366,7 @@ window.tryAutoLogin = function() {
       currentUser = user;
       restoreCachedFullDataIfAny();
       window.startFullDataSync && window.startFullDataSync();
+      window.startArticlesSync && window.startArticlesSync();
       startApp();
       resolve(true);
     });
@@ -4792,6 +4833,7 @@ function tryLearnKeywordFromFailedSearch(article) {
     return;
   }
   article.keywords = (article.keywords ? article.keywords + ', ' : '') + term;
+  markArticleDirty(article.id);
   save();
   showNotif('💡', 'Mot-clé appris', `"${term}" ajouté aux mots-clés de "${article.desc}"`);
   // Consommé : on ne veut pas retagger par erreur un autre article ajouté
@@ -5127,6 +5169,7 @@ async function startBulkPhotoImport(fileList) {
       const blob = await compressImageToBlob(file, 900, 0.75);
       const url = await uploadPhotoToCloudinary(article.id, blob);
       article[targetField] = url;
+      markArticleDirty(article.id);
       addLog(`✅ ${file.name} → ${article.desc} (SAP ${sap}) — ${fieldLabel}`, 'var(--primary)');
       ok++;
     } catch(e) {
@@ -5558,13 +5601,14 @@ function chooseHotspotArticle(articleId) {
     if(ajouter) {
       if(!a.categoriesSecondaires) a.categoriesSecondaires = [];
       if(!a.categoriesSecondaires.includes(schemaCategorie)) a.categoriesSecondaires.push(schemaCategorie);
+      markArticleDirty(a.id);
     } else {
       const remplacer = confirm(
         `Voulez-vous à la place REMPLACER la catégorie principale de cette pièce par "${schemaCategorie}" ?\n\n` +
         `OK = remplacer (l'ancienne catégorie "${a.categorie || '(aucune)'}" est retirée)\n` +
         `Annuler = ne rien changer (la zone sera quand même reliée)`
       );
-      if(remplacer) a.categorie = schemaCategorie;
+      if(remplacer) { a.categorie = schemaCategorie; markArticleDirty(a.id); }
     }
   }
 
@@ -5652,6 +5696,7 @@ async function saveSchema() {
             if(a.categorie === ancienneCategorie) a.categorie = categorie;
             else a.categoriesSecondaires = a.categoriesSecondaires.map(c => c === ancienneCategorie ? categorie : c);
           });
+          markArticlesDirty(linkedArticles.map(a => a.id));
         }
       }
     }
@@ -5860,6 +5905,7 @@ async function saveArticle() {
     DB.articles.push(data);
     addActivity('➕', `Nouvelle pièce ajoutée : ${desc}`);
   }
+  markArticleDirty(articleId);
   save();
   pendingPhotoBlob = null;
   if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Enregistrer'; }
@@ -5888,6 +5934,7 @@ function deleteArticle(id) {
   });
 
   save();
+  if(window.fbDeleteArticle) window.fbDeleteArticle(id); // supprime aussi de la collection bpm_articles
   if(a && window.fbReleaseSAP) window.fbReleaseSAP(a.sap); // libère la référence SAP, redevient disponible
   // Note : la photo éventuelle reste dans la médiathèque Cloudinary — la
   // suppression à distance nécessiterait une clé API secrète, impossible à
@@ -7452,6 +7499,7 @@ function processCategoryFix(csvText) {
 
   let updated = 0, notFoundInCatalogue = 0, emptyRows = 0, newCategories = new Set();
   const existingCategories = new Set(DB.settings.categories || []);
+  const touchedIds = [];
 
   for(let i = 1; i < lines.length; i++) {
     const cols = parseCSVRow(lines[i]);
@@ -7465,6 +7513,7 @@ function processCategoryFix(csvText) {
       addLog(`✅ SAP ${sap} — "${article.categorie || '(vide)'}" → "${catRaw}"`, 'var(--primary)');
       article.categorie = catRaw;
       updated++;
+      touchedIds.push(article.id);
     }
     if(!existingCategories.has(catRaw)) { newCategories.add(catRaw); existingCategories.add(catRaw); }
   }
@@ -7483,6 +7532,7 @@ function processCategoryFix(csvText) {
   if(newCategories.size) addLog(`Nouvelle(s) catégorie(s) ajoutée(s) automatiquement : ${[...newCategories].join(', ')}`, 'var(--text2)');
 
   if(updated > 0) {
+    markArticlesDirty(touchedIds);
     save();
     filterArticles();
     populateCategorieFilter();
@@ -7553,6 +7603,7 @@ function processQtyInterventionFix(csvText) {
   }
 
   let updated = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
+  const touchedIds = [];
 
   for(let i = 1; i < lines.length; i++) {
     const cols = parseCSVRow(lines[i]);
@@ -7566,6 +7617,7 @@ function processQtyInterventionFix(csvText) {
     addLog(`✅ SAP ${sap} — quantité renseignée : "${qtyRaw}"`, 'var(--primary)');
     article.qtyIntervention = qtyRaw;
     updated++;
+    touchedIds.push(article.id);
   }
 
   text.textContent = `Terminé : ${updated} quantité(s) renseignée(s), ${alreadyFilled} déjà renseignée(s) (non touchée(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
@@ -7573,6 +7625,7 @@ function processQtyInterventionFix(csvText) {
   addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseignée(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
+    markArticlesDirty(touchedIds);
     save();
     filterArticles();
   }
@@ -7643,6 +7696,7 @@ function processEmplacementFix(csvText) {
   }
 
   let updated = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
+  const touchedIds = [];
 
   for(let i = 1; i < lines.length; i++) {
     const cols = parseCSVRow(lines[i]);
@@ -7656,6 +7710,7 @@ function processEmplacementFix(csvText) {
     addLog(`✅ SAP ${sap} — emplacement renseigné : "${empRaw}"`, 'var(--primary)');
     article.emplacement = empRaw;
     updated++;
+    touchedIds.push(article.id);
   }
 
   text.textContent = `Terminé : ${updated} emplacement(s) renseigné(s), ${alreadyFilled} déjà renseigné(s) (non touché(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
@@ -7663,6 +7718,7 @@ function processEmplacementFix(csvText) {
   addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseigné(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
+    markArticlesDirty(touchedIds);
     save();
     filterArticles();
   }
@@ -7732,6 +7788,7 @@ function processFournisseurRefFix(csvText) {
   }
 
   let updated = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
+  const touchedIds = [];
 
   for(let i = 1; i < lines.length; i++) {
     const cols = parseCSVRow(lines[i]);
@@ -7745,6 +7802,7 @@ function processFournisseurRefFix(csvText) {
     addLog(`✅ SAP ${sap} — référence renseignée : "${refRaw}"`, 'var(--primary)');
     article.fournisseurRef = refRaw;
     updated++;
+    touchedIds.push(article.id);
   }
 
   text.textContent = `Terminé : ${updated} référence(s) renseignée(s), ${alreadyFilled} déjà renseignée(s) (non touchée(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
@@ -7752,6 +7810,7 @@ function processFournisseurRefFix(csvText) {
   addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseignée(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
+    markArticlesDirty(touchedIds);
     save();
     filterArticles();
   }
@@ -7909,6 +7968,7 @@ function processDesignationFix(csvText) {
   }
 
   let updated = 0, notFoundInCatalogue = 0, dejaIdentique = 0, emptyRows = 0;
+  const touchedIds = [];
 
   for(let i = 1; i < lines.length; i++) {
     const cols = parseCSVRow(lines[i]);
@@ -7922,6 +7982,7 @@ function processDesignationFix(csvText) {
     addLog(`✅ SAP ${sap} — "${article.desc}" → "${descRaw}"`, 'var(--primary)');
     article.desc = descRaw;
     updated++;
+    touchedIds.push(article.id);
   }
 
   text.textContent = `Terminé : ${updated} désignation(s) corrigée(s), ${dejaIdentique} déjà identique(s), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
@@ -7929,6 +7990,7 @@ function processDesignationFix(csvText) {
   addLog(`Résumé : ${updated} mise(s) à jour · ${dejaIdentique} déjà identique(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
+    markArticlesDirty(touchedIds);
     save();
     filterArticles();
   }
@@ -8009,6 +8071,8 @@ function mergeDuplicateArticles() {
 
   DB.articles = DB.articles.filter(a => a.id !== articleRemove.id);
 
+  markArticleDirty(articleKeep.id);
+  if(window.fbDeleteArticle) window.fbDeleteArticle(articleRemove.id);
   save();
   filterArticles();
   document.getElementById('merge-sap-keep').value = '';
@@ -8077,6 +8141,7 @@ function applyReorgCategoryChanges(source) {
   const articlesDirect = DB.articles.filter(a => a.categorie === source);
 
   let schemasChanged = 0, articlesViaSchema = 0, articlesDirectChanged = 0;
+  const touchedArticleIds = new Set();
 
   // 1) Schémas d'abord — chaque changement d'organe reclasse aussi
   // silencieusement (sans popup, vu que c'est une action groupée assumée)
@@ -8090,10 +8155,11 @@ function applyReorgCategoryChanges(source) {
       if(!h.articleId) return;
       const a = DB.articles.find(x => x.id === h.articleId);
       if(!a) return;
-      if(a.categorie === source) { a.categorie = newVal; articlesViaSchema++; }
+      if(a.categorie === source) { a.categorie = newVal; articlesViaSchema++; touchedArticleIds.add(a.id); }
       else if(a.categoriesSecondaires && a.categoriesSecondaires.includes(source)) {
         a.categoriesSecondaires = a.categoriesSecondaires.map(c => c === source ? newVal : c);
         articlesViaSchema++;
+        touchedArticleIds.add(a.id);
       }
     });
     s.categorie = newVal;
@@ -8110,6 +8176,7 @@ function applyReorgCategoryChanges(source) {
     if(newVal === source) return; // "Ne pas changer"
     a.categorie = newVal;
     articlesDirectChanged++;
+    touchedArticleIds.add(a.id);
   });
 
   if(!schemasChanged && !articlesDirectChanged) {
@@ -8117,6 +8184,7 @@ function applyReorgCategoryChanges(source) {
     return;
   }
 
+  markArticlesDirty([...touchedArticleIds]);
   save();
   filterArticles();
   renderAdminSchemaList();
@@ -8182,35 +8250,40 @@ async function runArticlesMigration() {
 
 function checkDatabaseSize() {
   const { users, ...dbWithoutUsers } = DB;
-  // Applique le même nettoyage que save() avant de mesurer — sinon on
-  // mesure les données en mémoire (avec tous les champs vides), pas ce qui
-  // est réellement envoyé à Firestore après le nettoyage.
-  const slimArticles = (dbWithoutUsers.articles || []).map(slimArticleForSave);
+  // ÉTAPE 2 : les pièces ne comptent PLUS dans la limite de 1 Mo — elles
+  // vivent dans leur propre collection (bpm_articles), un document par
+  // pièce, chacun individuellement minuscule. On les exclut donc du calcul
+  // du document principal, et on les affiche à part, à titre informatif.
+  const slimArticles = (DB.articles || []).map(slimArticleForSave);
   const slimSchemas = (dbWithoutUsers.schemas || []).map(slimSchemaForSave);
-  const dbForMeasure = { ...dbWithoutUsers, articles: slimArticles, schemas: slimSchemas };
+  const { articles: _omit, ...dbForMeasure } = { ...dbWithoutUsers, schemas: slimSchemas };
   const fullJSON = JSON.stringify(dbForMeasure);
   const totalBytes = new Blob([fullJSON]).size;
   const LIMIT = 1048576; // 1 Mo, limite Firestore par document
   const pct = Math.min(100, Math.round((totalBytes / LIMIT) * 1000) / 10);
 
-  const sections = ['articles','orders','kits','tools','loans','notifications','messages','activity','stockMovements','carts','schemas','settings'];
+  const sections = ['orders','kits','tools','loans','notifications','messages','activity','stockMovements','carts','schemas','settings'];
   const breakdown = sections.map(key => {
-    const source = key === 'articles' ? slimArticles : key === 'schemas' ? slimSchemas : DB[key];
+    const source = key === 'schemas' ? slimSchemas : DB[key];
     const size = source !== undefined ? new Blob([JSON.stringify(source)]).size : 0;
     return { key, size };
   }).sort((a,b) => b.size - a.size).filter(s => s.size > 0);
+
+  const articlesTotalBytes = new Blob([JSON.stringify(slimArticles)]).size;
+  const articlesAvgBytes = slimArticles.length ? Math.round(articlesTotalBytes / slimArticles.length) : 0;
 
   const fmtSize = (b) => b >= 1024*1024 ? (b/1024/1024).toFixed(2) + ' Mo' : b >= 1024 ? (b/1024).toFixed(1) + ' Ko' : b + ' o';
 
   const barColor = pct >= 85 ? 'var(--danger)' : pct >= 60 ? 'var(--amber)' : 'var(--success)';
   const statusMsg = pct >= 85
-    ? '⚠️ Attention, tu approches vraiment de la limite — les prochains enregistrements risquent d\'échouer bientôt. Il faudra envisager de séparer certaines données dans des documents/collections distincts.'
+    ? '⚠️ Attention, tu approches vraiment de la limite — les prochains enregistrements risquent d\'échouer bientôt.'
     : pct >= 60
-    ? '🟡 Encore de la marge, mais à surveiller de temps en temps — ça vaut le coup d\'y repenser avant que ça devienne urgent.'
+    ? '🟡 Encore de la marge, mais à surveiller de temps en temps.'
     : '✅ Large marge pour l\'instant, rien à faire de particulier.';
 
   document.getElementById('db-size-result').innerHTML = `
-    <div style="padding:14px 16px;background:var(--surface2);border-radius:var(--radius)">
+    <div style="padding:14px 16px;background:var(--surface2);border-radius:var(--radius);margin-bottom:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📄 Document principal (bpm/database)</div>
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
         <span style="font-size:20px;font-weight:800">${fmtSize(totalBytes)}</span>
         <span style="font-size:13px;color:var(--text2)">sur 1 Mo (${pct}%)</span>
@@ -8220,7 +8293,12 @@ function checkDatabaseSize() {
       </div>
       <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px">${statusMsg}</p>
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Répartition par section :</div>
-      ${breakdown.map(s => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--border)"><span>${s.key} ${s.key==='articles'?`(${DB.articles.length})`:s.key==='schemas'?`(${(DB.schemas||[]).length})`:s.key==='orders'?`(${DB.orders.length})`:''}</span><strong>${fmtSize(s.size)}</strong></div>`).join('')}
+      ${breakdown.map(s => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--border)"><span>${s.key}${s.key==='schemas'?` (${(DB.schemas||[]).length})`:s.key==='orders'?` (${DB.orders.length})`:''}</span><strong>${fmtSize(s.size)}</strong></div>`).join('')}
+    </div>
+    <div style="padding:14px 16px;background:var(--primary-light,#eef4ff);border-radius:var(--radius)">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">📦 Pièces (collection bpm_articles — plus de limite de 1 Mo globale)</div>
+      <div style="font-size:13px;color:var(--text)">${slimArticles.length} pièce(s) · ${fmtSize(articlesTotalBytes)} au total · ~${articlesAvgBytes} o en moyenne par pièce</div>
+      <p style="font-size:12px;color:var(--text2);margin-top:6px">Chaque pièce est son propre petit document — la limite de 1 Mo s'applique par pièce individuelle, jamais atteignable en pratique. Le nombre de pièces peut désormais grandir sans plafond.</p>
     </div>`;
 }
 
@@ -8233,6 +8311,7 @@ function fixMissingMagasin() {
   }
   if(!confirm(`${toFix.length} pièce(s) sans magasin renseigné vont être mises à jour avec "2K – Pike".\n\nLes pièces ayant déjà un autre magasin (ex: 2C – Haren) ne seront pas touchées.\n\nContinuer ?`)) return;
   toFix.forEach(a => { a.magasin = targetCode; });
+  markArticlesDirty(toFix.map(a => a.id));
   save();
   filterArticles();
   alert(`✅ ${toFix.length} pièce(s) mise(s) à jour avec le magasin "2K – Pike".`);
@@ -8512,6 +8591,7 @@ function saveSetting() {
       const oldVal = DB.settings.categories[editIdxNum];
       if(oldVal !== newVal) {
         let touched = 0;
+        const touchedIds = [];
         DB.articles.forEach(a => {
           let changed = false;
           if(a.categorie === oldVal) { a.categorie = newVal; changed = true; }
@@ -8519,7 +8599,7 @@ function saveSetting() {
             a.categoriesSecondaires = a.categoriesSecondaires.map(c => c === oldVal ? newVal : c);
             changed = true;
           }
-          if(changed) touched++;
+          if(changed) { touched++; touchedIds.push(a.id); }
         });
         // Les schémas n'étaient pas suivis ici auparavant — un schéma
         // gardait l'ancien nom d'organe même après renommage, devenant
@@ -8528,6 +8608,7 @@ function saveSetting() {
         let schemasTouched = 0;
         (DB.schemas || []).forEach(s => { if(s.categorie === oldVal) { s.categorie = newVal; schemasTouched++; } });
         DB.settings.categories[editIdxNum] = newVal;
+        if(touchedIds.length) markArticlesDirty(touchedIds);
         if(touched > 0 || schemasTouched > 0) showNotif('📂', 'Catégorie renommée', `${touched} pièce(s) et ${schemasTouched} schéma(s) mis à jour (${oldVal} → ${newVal})`);
       }
     } else if(type === 'fournisseurs') {
@@ -8537,8 +8618,10 @@ function saveSetting() {
       const oldVal = DB.settings.fournisseurs[editIdxNum];
       if(oldVal !== newVal) {
         let touched = 0;
-        DB.articles.forEach(a => { if(a.fournisseur === oldVal) { a.fournisseur = newVal; touched++; } });
+        const touchedIds = [];
+        DB.articles.forEach(a => { if(a.fournisseur === oldVal) { a.fournisseur = newVal; touched++; touchedIds.push(a.id); } });
         DB.settings.fournisseurs[editIdxNum] = newVal;
+        if(touchedIds.length) markArticlesDirty(touchedIds);
         if(touched > 0) showNotif('🏭', 'Fournisseur renommé', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
       }
     } else if(type === 'marques') {
@@ -8548,13 +8631,16 @@ function saveSetting() {
       const oldVal = DB.settings.marques[editIdxNum];
       if(oldVal !== newVal) {
         let touched = 0;
+        const touchedIds = [];
         DB.articles.forEach(a => {
           if(a.marquesBus && a.marquesBus.includes(oldVal)) {
             a.marquesBus = a.marquesBus.map(m => m === oldVal ? newVal : m);
             touched++;
+            touchedIds.push(a.id);
           }
         });
         DB.settings.marques[editIdxNum] = newVal;
+        if(touchedIds.length) markArticlesDirty(touchedIds);
         if(touched > 0) showNotif('🚌', 'Marque renommée', `${touched} pièce(s) mise(s) à jour (${oldVal} → ${newVal})`);
       }
     } else if(type === 'magasins') {
@@ -8565,8 +8651,10 @@ function saveSetting() {
       const oldCode = DB.settings.magasins[editIdxNum] ? DB.settings.magasins[editIdxNum].code : null;
       if(oldCode && oldCode !== newVal.code) {
         let touched = 0;
-        DB.articles.forEach(a => { if(a.magasin === oldCode) { a.magasin = newVal.code; touched++; } });
+        const touchedIds = [];
+        DB.articles.forEach(a => { if(a.magasin === oldCode) { a.magasin = newVal.code; touched++; touchedIds.push(a.id); } });
         DB.settings.magasins[editIdxNum] = newVal;
+        if(touchedIds.length) markArticlesDirty(touchedIds);
         if(touched > 0) showNotif('🏬', 'Magasin renommé', `${touched} pièce(s) mise(s) à jour (${oldCode} → ${newVal.code})`);
       } else {
         DB.settings.magasins[editIdxNum] = newVal;
@@ -8684,6 +8772,7 @@ async function processImportData(csvText, fmt) {
     // Data starts at row index 2 (skip header + note row)
     const dataLines = lines.slice(2);
     let created = 0, skipped = 0, errors = [];
+    const touchedIds = [];
 
     for (const line of dataLines) {
       if(!line.trim()) continue;
@@ -8729,10 +8818,12 @@ async function processImportData(csvText, fmt) {
         // pour l'ajout/modification manuelle d'une pièce à la fois.
         article.id = 'a' + Date.now() + Math.random().toString(36).slice(2,6);
         DB.articles.push(article);
+        touchedIds.push(article.id);
         created++;
       }
     }
 
+    markArticlesDirty(touchedIds);
     save();
     addActivity('📥', `Import : ${created} créés, ${skipped} ignorés (déjà existants ou incomplets)`);
 
