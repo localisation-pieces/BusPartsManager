@@ -1,6 +1,20 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<script>
+  // Attrape-tout de diagnostic (07/09/2026) : capture LITTÉRALEMENT toute
+  // erreur JS (y compris dans le script module Firebase, et les rejets de
+  // promesse non gérés) avant même que le reste de la page ne se charge.
+  // Objectif : ne plus jamais deviner — si quelque chose casse
+  // silencieusement dans Safari, ça doit apparaître ici, sans exception.
+  window.addEventListener('error', function(e) {
+    console.error('[DIAG-ERREUR-GLOBALE]', e.message, '| fichier:', e.filename, '| ligne:', e.lineno + ':' + e.colno, '| détail:', e.error && e.error.stack);
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    console.error('[DIAG-PROMESSE-REJETÉE]', e.reason && e.reason.message ? e.reason.message : e.reason, '| détail:', e.reason && e.reason.stack);
+  });
+  console.log('[DIAG] Script de capture d\'erreurs actif — chargement de la page en cours...');
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BusPartsManager — Gestion Pièces de Rechange</title>
@@ -1959,16 +1973,12 @@
   // + mot de passe), en remplacement du hachage maison (passHash/passSalt) qui ne
   // protégeait pas vraiment les données Firestore contre un accès non authentifié.
   const fbApp = initializeApp(firebaseConfig);
-  // Correctif Safari (confirmé le 07/09/2026) : le mécanisme de connexion
-  // temps réel habituel de Firestore ("WebChannel", des requêtes fetch en
-  // streaming) échoue silencieusement dans Safari sur certains réseaux/
-  // configurations — la connexion authentifiée à bpm/database ne
-  // s'établissait jamais, ni même depuis le cache, alors que Chrome n'avait
-  // aucun souci. experimentalAutoDetectLongPolling force l'utilisation
-  // d'un mode de connexion par requêtes classiques (long-polling) dès que
-  // le streaming ne fonctionne pas, sans rien changer pour les navigateurs
-  // qui n'en ont pas besoin.
-  const fsdb = initializeFirestore(fbApp, { experimentalAutoDetectLongPolling: true });
+  // 07/09/2026 : la tentative "experimentalAutoDetectLongPolling" a cassé la
+  // connexion Firestore pour TOUT LE MONDE (Chrome compris), pas seulement
+  // Safari — annulée immédiatement. Retour à l'initialisation standard qui
+  // fonctionnait, le temps de comprendre la vraie cause du souci Safari
+  // séparément, sans risquer la stabilité de l'appli en production.
+  const fsdb = getFirestore(fbApp);
   const fbAuth = getAuth(fbApp);
   const AUTH_DOMAIN_SUFFIX = 'buspartsmanager.local';
   window.matriculeToEmail = function(matricule) { return `${matricule}@${AUTH_DOMAIN_SUFFIX}`; };
@@ -2147,6 +2157,7 @@
   // Démarre le chargement du document complet — appelé UNIQUEMENT après une
   // connexion réussie (voir doLogin/tryAutoLogin dans le script principal).
   window.startFullDataSync = function() {
+    console.log('[DIAG] startFullDataSync() appelée — dataUnsub déjà actif ?', !!dataUnsub);
     if (dataUnsub) return;
     dataUnsub = onSnapshot(DATA_DOC, (snap) => {
       if (snap.exists()) {
