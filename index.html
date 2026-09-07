@@ -1936,7 +1936,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
-    getFirestore, doc, getDoc, getDocFromServer, setDoc, updateDoc, arrayUnion, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
+    getFirestore, initializeFirestore, doc, getDoc, getDocFromServer, setDoc, updateDoc, arrayUnion, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
     collection, getDocs, writeBatch,
     enableIndexedDbPersistence
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -1959,7 +1959,16 @@
   // + mot de passe), en remplacement du hachage maison (passHash/passSalt) qui ne
   // protégeait pas vraiment les données Firestore contre un accès non authentifié.
   const fbApp = initializeApp(firebaseConfig);
-  const fsdb  = getFirestore(fbApp);
+  // Correctif Safari (confirmé le 07/09/2026) : le mécanisme de connexion
+  // temps réel habituel de Firestore ("WebChannel", des requêtes fetch en
+  // streaming) échoue silencieusement dans Safari sur certains réseaux/
+  // configurations — la connexion authentifiée à bpm/database ne
+  // s'établissait jamais, ni même depuis le cache, alors que Chrome n'avait
+  // aucun souci. experimentalAutoDetectLongPolling force l'utilisation
+  // d'un mode de connexion par requêtes classiques (long-polling) dès que
+  // le streaming ne fonctionne pas, sans rien changer pour les navigateurs
+  // qui n'en ont pas besoin.
+  const fsdb = initializeFirestore(fbApp, { experimentalAutoDetectLongPolling: true });
   const fbAuth = getAuth(fbApp);
   const AUTH_DOMAIN_SUFFIX = 'buspartsmanager.local';
   window.matriculeToEmail = function(matricule) { return `${matricule}@${AUTH_DOMAIN_SUFFIX}`; };
