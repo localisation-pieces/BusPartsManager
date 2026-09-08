@@ -4162,7 +4162,7 @@ function openSchemaList(categorie) {
           <button onclick="moveSchemaItem('${s.id}',1)" ${i===schemas.length-1?'disabled':''} title="Déplacer après">▶</button>
         </div>
         <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
-        <div class="schema-thumb-title">${escapeHtml(s.titre)}</div>
+        <div class="schema-thumb-title">${highlightParens(s.titre)}</div>
       </div>`).join('');
   }
   document.getElementById('schema-add-btn').setAttribute('onclick', `closeModal('modal-schema-list');openSchemaEditor(null,'${categorie.replace(/'/g,"\\'")}')`);
@@ -4223,7 +4223,7 @@ function openSchemaViewer(schemaId, highlightArticleId) {
   nextBtn.style.display = inNavContext ? '' : 'none';
   const positionSuffix = inNavContext ? ` (${articleSchemaNavIndex + 1}/${articleSchemaNavList.length})` : '';
 
-  document.getElementById('schema-viewer-title').textContent = `📐 ${s.titre}${positionSuffix}`;
+  document.getElementById('schema-viewer-title').innerHTML = `📐 ${highlightParens(s.titre)}${escapeHtml(positionSuffix)}`;
   const cheminEl = document.getElementById('schema-viewer-chemin');
   if(s.cheminCatalogue) {
     cheminEl.style.display = 'block';
@@ -4817,7 +4817,7 @@ function renderArticleSchemaLinks(articleId) {
         ${schemas.length > 1 ? `<button class="btn btn-primary btn-sm" onclick="openAllArticleSchemas('${articleId}')">📐 Voir tous (${schemas.length})</button>` : ''}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:8px">
-        ${schemas.map(s => `<button class="btn btn-outline btn-sm" onclick="closeModal('modal-article-detail');openSchemaViewer('${s.id}', '${articleId}')">📐 ${escapeHtml(s.titre)} <span style="color:var(--text3);font-weight:400">(${escapeHtml(s.categorie)})</span></button>`).join('')}
+        ${schemas.map(s => `<button class="btn btn-outline btn-sm" onclick="closeModal('modal-article-detail');openSchemaViewer('${s.id}', '${articleId}')">📐 ${highlightParens(s.titre)} <span style="color:var(--text3);font-weight:400">(${escapeHtml(s.categorie)})</span></button>`).join('')}
       </div>
     </div>`;
 }
@@ -7150,7 +7150,7 @@ function renderSchemasPage() {
               <button onclick="moveSchemaItem('${s.id}',1)" ${groupPos===byOrgane[organe].length-1?'disabled':''} title="Déplacer après">▶</button>
             </div>
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
-            <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(isStaff && (s.hotspots||[]).filter(h=>h.notFound).length) ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
+            <div class="schema-thumb-title">${highlightParens(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(isStaff && (s.hotspots||[]).filter(h=>h.notFound).length) ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`; }).join('')}
       </div>
     </div>`;
@@ -7194,7 +7194,7 @@ function renderAdminSchemaList() {
               <button onclick="moveSchemaItem('${s.id}',1)" ${i===byOrgane[organe].length-1?'disabled':''} title="Déplacer après">▶</button>
             </div>
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
-            <div class="schema-thumb-title">${escapeHtml(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
+            <div class="schema-thumb-title">${highlightParens(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`).join('')}
       </div>
     </div>`).join('');
@@ -8276,7 +8276,7 @@ function renderReorgCategoryTool() {
               <div style="width:36px;height:36px;border-radius:6px;overflow:hidden;background:var(--surface2);flex-shrink:0">
                 <img src="${cloudinaryOptimized(s.image,'w_100')}" style="width:100%;height:100%;object-fit:cover" loading="lazy">
               </div>
-              <div style="flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.titre)}</div>
+              <div style="flex:1;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${highlightParens(s.titre)}</div>
               <select id="reorg-schema-${s.id}" style="font-size:12px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface)">${options(source)}</select>
             </div>`).join('')}
         </div>
@@ -10300,6 +10300,15 @@ function sanitizeInput(str) {
 
 function escapeHtml(str) {
   return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/\n/g,'<br>');
+}
+
+// Met en valeur le texte entre parenthèses dans un titre de schéma (ex:
+// "MOYEUX DE ROUE (AVANT)" -> "(AVANT)" en couleur/gras) — purement visuel,
+// utilisé partout où un titre de schéma s'affiche en HTML (jamais dans un
+// attribut comme alt="", où le HTML ne peut pas s'afficher).
+function highlightParens(text) {
+  const safe = escapeHtml(text);
+  return safe.replace(/\(([^)]+)\)/g, '(<span style="color:var(--amber-dark);font-weight:800">$1</span>)');
 }
 
 function addActivity(icon, msg) {
