@@ -588,6 +588,7 @@
       </div>
       <div class="nav-item" onclick="navGo('schemas')" id="nav-schemas" style="display:none">
         <span class="icon">📐</span> Schémas
+        <span class="nav-badge" id="schemas-count-badge" style="background:var(--border);color:var(--text2)">0</span>
       </div>
       <div class="nav-item" onclick="navGo('catalog')" id="nav-catalog" style="display:none">
         <span class="icon">🔧</span> Catalogue pièces
@@ -7089,6 +7090,7 @@ function renderSchemasPage() {
   const schemas = DB.schemas || [];
   if(!schemas.length) {
     container.innerHTML = '<div class="empty-state"><div class="empty-icon">📐</div><p>Aucun schéma créé pour le moment.</p></div>';
+    updateSchemasCountBadge(0);
     return;
   }
 
@@ -7129,13 +7131,16 @@ function renderSchemasPage() {
 
   if(!orderedKeys.length) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Aucun schéma ne correspond${q ? ` à "${escapeHtml(q)}"` : ' à cette sélection'}</p></div>`;
+    updateSchemasCountBadge(0);
     return;
   }
 
+  let visibleCount = 0;
   container.innerHTML = orderedKeys.map(organe => {
     const items = q
       ? byOrgane[organe].filter(s => schemaMatchesQuery(s, organe))
       : byOrgane[organe];
+    visibleCount += items.length;
     return `
     <div style="margin-bottom:22px">
       <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px">
@@ -7155,6 +7160,16 @@ function renderSchemasPage() {
       </div>
     </div>`;
   }).join('');
+  updateSchemasCountBadge(visibleCount);
+}
+
+// Même logique que le badge du catalogue (catalog-count-badge) : affiche le
+// nombre de schémas actuellement visibles dans le volet de gauche, compte
+// tenu des filtres d'organe et de la recherche texte en cours — pas juste le
+// total de schémas existants.
+function updateSchemasCountBadge(count) {
+  const badge = document.getElementById('schemas-count-badge');
+  if(badge) { badge.textContent = count; badge.style.display = count ? '' : 'none'; }
 }
 
 function renderAdminSchemaList() {
