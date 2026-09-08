@@ -10303,16 +10303,27 @@ function escapeHtml(str) {
 }
 
 // Met en valeur différents marqueurs dans un titre de schéma :
-// - texte entre parenthèses ( )  -> gras rouge
-// - texte entre guillemets " "   -> gras vert
-// - texte entre une paire && ... && -> gras bleu
-// Purement visuel, utilisé partout où un titre de schéma s'affiche en HTML
-// (jamais dans un attribut comme alt="", où le HTML ne peut pas s'afficher).
+// - texte entre parenthèses ( )        -> gras rouge
+// - texte entre guillemets " " OU " "  -> gras vert (droits ET courbes, macOS
+//   remplace automatiquement " par des guillemets courbes en tapant)
+// - texte entre une paire && ... &&    -> gras bleu
+// Travaille sur le texte BRUT avant l'échappement HTML (via des jetons
+// temporaires), pour éviter tout souci avec l'échappement de " et & qui
+// rendrait les marqueurs impossibles à retrouver après coup.
 function highlightParens(text) {
-  let safe = escapeHtml(text);
-  safe = safe.replace(/\(([^)]*)\)/g, '(<span style="color:var(--danger);font-weight:800">$1</span>)');
-  safe = safe.replace(/&quot;([^&]*?)&quot;/g, '&quot;<span style="color:var(--success);font-weight:800">$1</span>&quot;');
-  safe = safe.replace(/&amp;&amp;([^&]*?)&amp;&amp;/g, '&amp;&amp;<span style="color:var(--info);font-weight:800">$1</span>&amp;&amp;');
+  const tokens = [];
+  function stash(html) { tokens.push(html); return '\u0000' + (tokens.length - 1) + '\u0000'; }
+
+  let working = text || '';
+  working = working.replace(/\(([^)]*)\)/g, (m, inner) =>
+    stash('(<span style="color:var(--danger);font-weight:800">' + escapeHtml(inner) + '</span>)'));
+  working = working.replace(/["“”]([^"“”]*)["“”]/g, (m, inner) =>
+    stash('"<span style="color:var(--success);font-weight:800">' + escapeHtml(inner) + '</span>"'));
+  working = working.replace(/&&([^&]*?)&&/g, (m, inner) =>
+    stash('&&<span style="color:var(--info);font-weight:800">' + escapeHtml(inner) + '</span>&&'));
+
+  let safe = escapeHtml(working);
+  safe = safe.replace(/\u0000(\d+)\u0000/g, (m, i) => tokens[Number(i)]);
   return safe;
 }
 
