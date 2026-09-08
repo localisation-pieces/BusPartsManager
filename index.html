@@ -10319,8 +10319,8 @@ function highlightParens(text) {
     stash('(<span style="color:var(--danger);font-weight:800">' + escapeHtml(inner) + '</span>)'));
   working = working.replace(/["“”]([^"“”]*)["“”]/g, (m, inner) =>
     stash('"<span style="color:var(--success);font-weight:800">' + escapeHtml(inner) + '</span>"'));
-  working = working.replace(/&&([^&]*?)&&/g, (m, inner) =>
-    stash('&&<span style="color:var(--info);font-weight:800">' + escapeHtml(inner) + '</span>&&'));
+  working = working.replace(/&([^&]*?)&/g, (m, inner) =>
+    stash('&<span style="color:var(--info);font-weight:800">' + escapeHtml(inner) + '</span>&'));
 
   let safe = escapeHtml(working);
   safe = safe.replace(/\u0000(\d+)\u0000/g, (m, i) => tokens[Number(i)]);
