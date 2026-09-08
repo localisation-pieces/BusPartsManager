@@ -10302,13 +10302,18 @@ function escapeHtml(str) {
   return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/\n/g,'<br>');
 }
 
-// Met en valeur le texte entre parenthèses dans un titre de schéma (ex:
-// "MOYEUX DE ROUE (AVANT)" -> "(AVANT)" en couleur/gras) — purement visuel,
-// utilisé partout où un titre de schéma s'affiche en HTML (jamais dans un
-// attribut comme alt="", où le HTML ne peut pas s'afficher).
+// Met en valeur différents marqueurs dans un titre de schéma :
+// - texte entre parenthèses ( )  -> gras rouge
+// - texte entre guillemets " "   -> gras vert
+// - texte entre une paire && ... && -> gras bleu
+// Purement visuel, utilisé partout où un titre de schéma s'affiche en HTML
+// (jamais dans un attribut comme alt="", où le HTML ne peut pas s'afficher).
 function highlightParens(text) {
-  const safe = escapeHtml(text);
-  return safe.replace(/\(([^)]+)\)/g, '(<span style="color:var(--amber-dark);font-weight:800">$1</span>)');
+  let safe = escapeHtml(text);
+  safe = safe.replace(/\(([^)]*)\)/g, '(<span style="color:var(--danger);font-weight:800">$1</span>)');
+  safe = safe.replace(/&quot;([^&]*?)&quot;/g, '&quot;<span style="color:var(--success);font-weight:800">$1</span>&quot;');
+  safe = safe.replace(/&amp;&amp;([^&]*?)&amp;&amp;/g, '&amp;&amp;<span style="color:var(--info);font-weight:800">$1</span>&amp;&amp;');
+  return safe;
 }
 
 function addActivity(icon, msg) {
