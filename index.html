@@ -1953,7 +1953,7 @@
   import {
     getFirestore, initializeFirestore, doc, getDoc, getDocFromServer, setDoc, updateDoc, arrayUnion, onSnapshot, runTransaction, deleteDoc, serverTimestamp,
     collection, getDocs, writeBatch,
-    enableIndexedDbPersistence
+    enableIndexedDbPersistence, persistentLocalCache, persistentMultipleTabManager
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import {
     getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -1979,7 +1979,26 @@
   // Safari — annulée immédiatement. Retour à l'initialisation standard qui
   // fonctionnait, le temps de comprendre la vraie cause du souci Safari
   // séparément, sans risquer la stabilité de l'appli en production.
-  const fsdb = getFirestore(fbApp);
+  //
+  // 10/09/2026 : enableIndexedDbPersistence() (ancienne API, voir plus bas)
+  // ne supporte qu'UN SEUL onglet à la fois — sur un poste partagé avec
+  // plusieurs onglets ouverts, le cache local échouait silencieusement pour
+  // les onglets suivants (erreur avalée par le catch), qui repayaient alors
+  // le prix fort (resynchronisation complète de bpm_articles + bpm_schemas,
+  // ~2844 lectures) à chaque ouverture. Le suivi Firebase Console a confirmé
+  // le problème : ~19k lectures en une journée avec seulement 3 connexions
+  // simultanées au pic. Passage à l'API moderne avec
+  // persistentMultipleTabManager, qui gère correctement plusieurs onglets.
+  // Contrairement à experimentalAutoDetectLongPolling (l'incident du
+  // 07/09 ci-dessus), ceci ne touche PAS le transport réseau — uniquement la
+  // couche de cache local — donc le risque de casser la connexion Firestore
+  // est beaucoup plus faible. En cas de souci malgré tout : commenter le
+  // bloc ci-dessous, décommenter la ligne getFirestore(fbApp) juste après,
+  // et réactiver enableIndexedDbPersistence(fsdb) plus bas.
+  const fsdb = initializeFirestore(fbApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+  // const fsdb = getFirestore(fbApp);
   const fbAuth = getAuth(fbApp);
   const AUTH_DOMAIN_SUFFIX = 'buspartsmanager.local';
   window.matriculeToEmail = function(matricule) { return `${matricule}@${AUTH_DOMAIN_SUFFIX}`; };
@@ -1995,7 +2014,11 @@
   window.fbReauthenticateWithCredential = reauthenticateWithCredential;
   window.fbUpdatePassword = updatePassword;
   window.fbSendPasswordResetEmail = sendPasswordResetEmail;
-  try { enableIndexedDbPersistence(fsdb); } catch(e) {}
+  // Remplacé par localCache/persistentMultipleTabManager ci-dessus (voir
+  // commentaire du 10/09/2026) — ne pas réactiver cette ligne en même temps
+  // que initializeFirestore({localCache}) : Firestore lève une erreur si les
+  // deux méthodes de persistance sont configurées ensemble.
+  // try { enableIndexedDbPersistence(fsdb); } catch(e) {}
 
   // Création de compte via une instance Firebase secondaire : nécessaire car
   // createUserWithEmailAndPassword connecte automatiquement le nouveau compte
