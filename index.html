@@ -4149,6 +4149,14 @@ function renderSchemaHint() {
   row.innerHTML = `<button class="btn btn-outline" style="font-size:12.5px;padding:7px 12px" onclick="openSchemaList('${current.replace(/'/g,"\\'")}')">${label}</button>`;
 }
 
+// Affiche le chemin catalogue fournisseur (s'il existe) juste au-dessus du
+// titre sur les vignettes de schéma — permet de repérer le bon schéma sans
+// avoir à l'ouvrir, avant même de cliquer dessus.
+function schemaCheminThumbHtml(s) {
+  if(!s.cheminCatalogue) return '';
+  return `<div style="font-size:11px;color:var(--text3);padding:8px 10px 0">📂 ${escapeHtml(s.cheminCatalogue)}</div>`;
+}
+
 function openSchemaList(categorie) {
   document.getElementById('schema-list-title').textContent = `📐 Schémas — ${categorie}`;
   const grid = document.getElementById('schema-list-grid');
@@ -4163,6 +4171,7 @@ function openSchemaList(categorie) {
           <button onclick="moveSchemaItem('${s.id}',1)" ${i===schemas.length-1?'disabled':''} title="Déplacer après">▶</button>
         </div>
         <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+        ${schemaCheminThumbHtml(s)}
         <div class="schema-thumb-title">${highlightParens(s.titre)}</div>
       </div>`).join('');
   }
@@ -7155,6 +7164,7 @@ function renderSchemasPage() {
               <button onclick="moveSchemaItem('${s.id}',1)" ${groupPos===byOrgane[organe].length-1?'disabled':''} title="Déplacer après">▶</button>
             </div>
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+            ${schemaCheminThumbHtml(s)}
             <div class="schema-thumb-title">${highlightParens(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(isStaff && (s.hotspots||[]).filter(h=>h.notFound).length) ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`; }).join('')}
       </div>
@@ -7209,6 +7219,7 @@ function renderAdminSchemaList() {
               <button onclick="moveSchemaItem('${s.id}',1)" ${i===byOrgane[organe].length-1?'disabled':''} title="Déplacer après">▶</button>
             </div>
             <img src="${cloudinaryOptimized(s.image,'w_300')}" alt="${escapeHtml(s.titre)}" loading="lazy">
+            ${schemaCheminThumbHtml(s)}
             <div class="schema-thumb-title">${highlightParens(s.titre)}<br><span style="font-weight:400;color:var(--text3)">${(s.hotspots||[]).filter(h=>h.articleId).length} pièce(s)${(s.hotspots||[]).filter(h=>h.notFound).length ? ` · ${(s.hotspots||[]).filter(h=>h.notFound).length} introuvable(s)` : ''}</span></div>
           </div>`).join('')}
       </div>
