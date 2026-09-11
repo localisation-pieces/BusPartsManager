@@ -5835,11 +5835,22 @@ async function saveSchema() {
   if(!schemaPendingImageBlob && !schemaCurrentImageUrl) { alert('Merci d\'ajouter une image de schéma.'); return; }
 
   // Uniquement pour un NOUVEAU schéma (pas en modification d'un existant) —
-  // avertit si un schéma du même titre existe déjà pour cet organe, sans
-  // bloquer (peut arriver légitimement, ex: deux vues très proches).
+  // avertit si un schéma du même titre existe déjà, sans bloquer (peut
+  // arriver légitimement, ex: deux vues très proches) — c'est à
+  // l'utilisateur de décider. Cherche sur TOUTES les catégories, pas
+  // seulement celle sélectionnée : un titre dupliqué dans un AUTRE organe
+  // (souvent un copier-coller de catégorie oublié) passait inaperçu avant.
   if(!schemaEditingId) {
-    const doublonExistant = (DB.schemas || []).some(s => s.categorie === categorie && s.titre.toLowerCase() === titre.toLowerCase());
-    if(doublonExistant && !confirm(`⚠️ Un schéma "${titre}" existe déjà pour l'organe "${categorie}".\n\nCréer quand même celui-ci en plus ?`)) return;
+    const titreLower = titre.toLowerCase();
+    const doublons = (DB.schemas || []).filter(s => s.titre.toLowerCase() === titreLower);
+    if(doublons.length) {
+      const memeCategorie = doublons.some(s => s.categorie === categorie);
+      const autresCategories = [...new Set(doublons.filter(s => s.categorie !== categorie).map(s => s.categorie))];
+      const msg = memeCategorie
+        ? `⚠️ Un schéma "${titre}" existe déjà pour l'organe "${categorie}".\n\nCréer quand même celui-ci en plus ?`
+        : `⚠️ Un schéma "${titre}" existe déjà, mais pour ${autresCategories.length > 1 ? 'd\'autres organes' : 'un autre organe'} : ${autresCategories.join(', ')}.\n\nCréer quand même celui-ci pour "${categorie}" ?`;
+      if(!confirm(msg)) return;
+    }
   }
 
   const saveBtn = document.getElementById('schema-save-btn');
