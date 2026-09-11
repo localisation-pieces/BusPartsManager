@@ -7014,6 +7014,21 @@ function updateBadges() {
   // charge, car lui seul connaît le nombre réel après filtrage (ex: "Avec
   // photo"). L'écraser ici avec le total brut du catalogue effaçait à tort
   // le chiffre filtré dès qu'un rafraîchissement général se déclenchait.
+  //
+  // schemas-count-badge en revanche DOIT être mis à jour ici : contrairement
+  // au catalogue (page d'accueil, donc filterArticles() tourne déjà au
+  // démarrage), la page Schémas n'est rendue qu'à la première visite — sans
+  // ça le badge restait à "0" tant qu'on n'avait pas cliqué dessus au moins
+  // une fois. On n'écrase que si la page Schémas n'est pas déjà ouverte, pour
+  // ne pas effacer un compte filtré (recherche/organe) par le total brut.
+  if(typeof currentView === 'undefined' || currentView !== 'schemas') {
+    const sb = document.getElementById('schemas-count-badge');
+    if(sb) {
+      const n = (DB.schemas || []).length;
+      sb.textContent = n;
+      sb.style.display = n ? '' : 'none';
+    }
+  }
 
   // Bottom nav badges
   const myPendingCount = DB.orders.filter(o => o.agentId === currentUser?.id && (o.status === 'pending' || o.status === 'taken')).length;
