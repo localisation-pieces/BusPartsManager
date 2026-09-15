@@ -2522,7 +2522,7 @@
   };
 
   window.fbReleaseMatricule = async function(matricule) {
-    try { await deleteDoc(doc(fsdb, 'matricules', matricule)); } catch(e) {}
+    try { await deleteDoc(doc(fsdb, 'matricules', matricule)); } catch(e) { console.warn('fbReleaseMatricule a échoué (réservation restera orpheline, nettoyée plus tard par fbCleanOrphanMatriculeReservations) :', e); }
   };
 
   // Réservation ATOMIQUE d'une référence SAP (transaction Firestore) : garantit
@@ -2549,7 +2549,7 @@
   };
 
   window.fbReleaseSAP = async function(sap) {
-    try { await deleteDoc(doc(fsdb, 'sapRefs', sap)); } catch(e) {}
+    try { await deleteDoc(doc(fsdb, 'sapRefs', sap)); } catch(e) { console.warn('fbReleaseSAP a échoué (réservation restera orpheline, nettoyée plus tard par fbCleanOrphanSapReservations) :', e); }
   };
 
   // Nettoyage ponctuel : supprime les réservations SAP "orphelines" (créées
@@ -2564,7 +2564,7 @@
       let removed = 0;
       for (const d of snap.docs) {
         if (!validSaps.has(d.id)) {
-          try { await deleteDoc(doc(fsdb, 'sapRefs', d.id)); removed++; } catch(e) {}
+          try { await deleteDoc(doc(fsdb, 'sapRefs', d.id)); removed++; } catch(e) { console.warn('Nettoyage réservation SAP orpheline échoué pour', d.id, ':', e); }
         }
       }
       return removed;
@@ -2584,7 +2584,7 @@
       let removed = 0;
       for (const d of snap.docs) {
         if (!validMatricules.has(d.id)) {
-          try { await deleteDoc(doc(fsdb, 'matricules', d.id)); removed++; } catch(e) {}
+          try { await deleteDoc(doc(fsdb, 'matricules', d.id)); removed++; } catch(e) { console.warn('Nettoyage réservation matricule orpheline échoué pour', d.id, ':', e); }
         }
       }
       return removed;
@@ -2957,7 +2957,7 @@ window.applyRemoteArticles = function(articles) {
     if (fullDataLoaded) { try { localStorage.setItem('bpm_db', JSON.stringify(DB)); } catch(e){} }
     const modalOpen = document.querySelector('.modal.open, .modal-overlay.open');
     if (!modalOpen && document.getElementById('app').style.display !== 'none' && typeof currentView !== 'undefined' && currentView === 'catalog') {
-      try { filterArticles(); } catch(e) {}
+      try { filterArticles(); } catch(e) { console.error('Rafraîchissement du catalogue après mise à jour distante échoué — l\'écran peut afficher des données obsolètes :', e); }
     }
   } finally {
     applyingRemote = false;
@@ -2977,7 +2977,7 @@ window.applyRemoteSchemas = function(schemas) {
       try {
         if(currentView === 'schemas') renderSchemasPage();
         if(currentView === 'admin') renderAdminSchemaList();
-      } catch(e) {}
+      } catch(e) { console.error('Rafraîchissement des schémas après mise à jour distante échoué — l\'écran peut afficher des données obsolètes :', e); }
     }
   } finally {
     applyingRemote = false;
@@ -3020,8 +3020,8 @@ window.applyRemoteData = function(data, fromCache) {
     // en direct les changements faits depuis un autre appareil.
     const modalOpen = document.querySelector('.modal.open, .modal-overlay.open');
     if (!modalOpen && document.getElementById('app').style.display !== 'none' && typeof currentView !== 'undefined' && currentView) {
-      try { showView(currentView); } catch(e) {}
-      try { updateBadges(); } catch(e) {}
+      try { showView(currentView); } catch(e) { console.error('Rafraîchissement de l\'écran après mise à jour distante échoué — l\'écran peut afficher des données obsolètes :', e); }
+      try { updateBadges(); } catch(e) { console.error('Mise à jour des badges après mise à jour distante échouée :', e); }
     }
   } finally {
     applyingRemote = false;
@@ -3257,7 +3257,7 @@ async function doForgotPassword() {
         read: false,
         time: Date.now()
       });
-    } catch(e) {}
+    } catch(e) { console.error('Notification admin "mot de passe oublié" échouée — l\'admin ne sera pas prévenu automatiquement :', e); }
   }
 
   if(btn) { btn.disabled = false; btn.textContent = 'Envoyer la demande'; }
@@ -7540,7 +7540,7 @@ async function saveUserSubmit(actionFn, errEl, matricule, onFailureCleanup) {
     : true;
   if(!saved) {
     DB.users = previousUsersSnapshot;
-    if (onFailureCleanup) { try { await onFailureCleanup(); } catch(e){} }
+    if (onFailureCleanup) { try { await onFailureCleanup(); } catch(e){ console.warn('onFailureCleanup a lui-même échoué :', e); } }
     errEl.textContent = "🚫 L'enregistrement a échoué (connexion instable). Réessayez.";
     errEl.style.display = 'block';
     return;
