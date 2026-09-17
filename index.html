@@ -781,6 +781,8 @@
               <span>🔍</span>
               <input type="text" placeholder="Rechercher par description, référence SAP, fournisseur, mots-clés..." oninput="debouncedFilterArticles()" id="search-input">
             </div>
+            <button class="btn btn-outline" onclick="document.getElementById('photo-search-input').click()" title="Rechercher une pièce à partir d'une photo">📷 Rechercher par photo</button>
+            <input type="file" id="photo-search-input" accept="image/*" style="display:none" onchange="handlePhotoSearchFile(this)">
             <button id="mobile-filter-toggle" onclick="toggleMobileFilters('catalog-filter-bar', this)">🔽 Filtres</button>
           </div>
           <div class="filter-bar" id="catalog-filter-bar" style="margin:0;gap:8px;">
@@ -1141,6 +1143,15 @@
         </div>
 
         <div class="admin-section">
+          <div class="admin-section-header">📷 Recherche par photo — empreintes visuelles</div>
+          <div class="admin-section-body">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Une pièce dont la photo vient d'être ajoutée ou changée n'apparaît pas tout de suite dans "Rechercher par photo" — il faut d'abord calculer son empreinte visuelle. Ce bouton s'en charge pour toutes les pièces en attente, directement dans ce navigateur (1-2 min de chargement la première fois sur cet appareil).</p>
+            <button class="btn btn-outline" id="update-embeddings-btn" onclick="updateMissingPhotoEmbeddings()">🔄 Mettre à jour les empreintes visuelles</button>
+            <div id="update-embeddings-result" style="margin-top:14px"></div>
+          </div>
+        </div>
+
+        <div class="admin-section">
           <div class="admin-section-header">📏 Taille de la base de données</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
@@ -1421,6 +1432,21 @@
     </div>
     <div id="detail-body"></div>
     <div class="modal-footer" id="detail-footer"></div>
+  </div>
+</div>
+
+<!-- PHOTO SEARCH MODAL — recherche d'une pièce à partir d'une photo prise sur
+     le terrain, par ressemblance visuelle (voir computePhotoEmbedding /
+     runPhotoSearch). La photo de recherche n'est jamais envoyée nulle part :
+     tout le calcul se fait dans le navigateur, elle est oubliée une fois le
+     résultat affiché. -->
+<div class="modal-overlay" id="modal-photo-search">
+  <div class="modal" style="width:820px">
+    <div class="modal-header">
+      <h3>📷 Recherche par photo</h3>
+      <button class="modal-close" onclick="closeModal('modal-photo-search')">✕</button>
+    </div>
+    <div class="modal-body" id="photo-search-body" style="min-height:160px"></div>
   </div>
 </div>
 
@@ -5258,6 +5284,154 @@ function compressImageToBlob(file, maxDim, quality) {
     reader.onerror = () => reject(new Error('Lecture du fichier échouée'));
     reader.readAsDataURL(file);
   });
+}
+
+// =============================
+// RECHERCHE PAR PHOTO — retrouve les pièces du catalogue qui ressemblent
+// visuellement à une photo prise sur le terrain (pièce démontée, difficile à
+// décrire par mots-clés). Fonctionne entièrement dans le navigateur : la
+// photo n'est jamais envoyée à un serveur, seul un vecteur de nombres
+// ("empreinte visuelle") en est extrait pour la comparer à celles déjà
+// calculées pour chaque pièce du catalogue (champ photoEmbedding, généré une
+// fois pour toutes par le script compute-photo-embeddings.js). Le modèle
+// utilisé (CLIP, via transformers.js) est chargé à la demande, uniquement au
+// premier clic sur "Rechercher par photo" — ~90 Mo la première fois, mis en
+// cache par le navigateur ensuite (pas de re-téléchargement).
+// Doit rester identique au modèle utilisé par compute-photo-embeddings.js
+// (script admin hors dépôt) — sinon les empreintes ne seraient plus
+// comparables entre elles (espaces vectoriels différents selon le modèle).
+const CLIP_MODEL_ID = 'clip-vit-base-patch32';
+
+let clipPipelinePromise = null;
+function loadClipPipeline() {
+  if(!clipPipelinePromise) {
+    clipPipelinePromise = (async () => {
+      const { AutoProcessor, CLIPVisionModelWithProjection, RawImage } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+      const modelId = `Xenova/${CLIP_MODEL_ID}`;
+      const processor = await AutoProcessor.from_pretrained(modelId);
+      const model = await CLIPVisionModelWithProjection.from_pretrained(modelId, { quantized: true });
+      return { processor, model, RawImage };
+    })();
+  }
+  return clipPipelinePromise;
+}
+
+function normalizeVector(vec) {
+  const norm = Math.sqrt(vec.reduce((s, x) => s + x * x, 0));
+  return vec.map(x => x / norm);
+}
+
+function dotProduct(a, b) {
+  let sum = 0;
+  for(let i = 0; i < a.length; i++) sum += a[i] * b[i];
+  return sum;
+}
+
+async function computePhotoEmbedding(blob, RawImage, processor, model) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = await RawImage.fromURL(url);
+    const inputs = await processor(image);
+    const { image_embeds } = await model(inputs);
+    return normalizeVector(Array.from(image_embeds.data));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function handlePhotoSearchFile(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if(!file) return;
+
+  openModal('modal-photo-search');
+  const body = document.getElementById('photo-search-body');
+  body.innerHTML = `<div class="empty-state"><div class="empty-icon">📷</div><p>Analyse de la photo en cours…</p><p style="font-size:11.5px;color:var(--text3)">Premier essai sur cet appareil : peut prendre une minute (téléchargement du modèle, une seule fois).</p></div>`;
+
+  try {
+    const blob = await compressImageToBlob(file, 500, 0.85);
+    const { processor, model, RawImage } = await loadClipPipeline();
+    const queryEmbedding = await computePhotoEmbedding(blob, RawImage, processor, model);
+
+    const candidates = (DB.articles || []).filter(a => Array.isArray(a.photoEmbedding) && a.photoEmbedding.length === queryEmbedding.length);
+    const scored = candidates.map(a => ({ article: a, score: dotProduct(queryEmbedding, a.photoEmbedding) }));
+    scored.sort((a, b) => b.score - a.score);
+    renderPhotoSearchResults(scored.slice(0, 20));
+  } catch(e) {
+    console.error('Recherche par photo échouée :', e);
+    body.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>La recherche par photo a échoué.</p><p style="font-size:11.5px;color:var(--text3)">${escapeHtml(e && e.message ? e.message : '')}</p></div>`;
+  }
+}
+
+async function computeEmbeddingFromUrl(url, RawImage, processor, model) {
+  const image = await RawImage.fromURL(cloudinaryOptimized(url, 'w_300'));
+  const inputs = await processor(image);
+  const { image_embeds } = await model(inputs);
+  return normalizeVector(Array.from(image_embeds.data));
+}
+
+// Outil admin (voir page Administration) : calcule l'empreinte visuelle des
+// pièces dont la photo a été ajoutée/changée depuis le dernier passage —
+// sans ça, "Rechercher par photo" ignore silencieusement ces pièces. Fait
+// dans le navigateur de l'admin qui clique, pas besoin du Terminal.
+async function updateMissingPhotoEmbeddings() {
+  const btn = document.getElementById('update-embeddings-btn');
+  const result = document.getElementById('update-embeddings-result');
+  const toProcess = (DB.articles || []).filter(a => a.photo && (a.photoEmbeddingModel !== CLIP_MODEL_ID || !Array.isArray(a.photoEmbedding)));
+
+  if(!toProcess.length) {
+    result.innerHTML = `<p style="font-size:13px;color:var(--success)">✅ Toutes les pièces avec photo ont déjà une empreinte à jour.</p>`;
+    return;
+  }
+
+  btn.disabled = true;
+  result.innerHTML = `<p style="font-size:13px;color:var(--text2)">⏳ Chargement du modèle (peut prendre 1-2 min la première fois)...</p>`;
+  try {
+    const { processor, model, RawImage } = await loadClipPipeline();
+    let done = 0, failed = 0;
+    const updatedIds = [];
+    for(const a of toProcess) {
+      try {
+        a.photoEmbedding = await computeEmbeddingFromUrl(a.photo, RawImage, processor, model);
+        a.photoEmbeddingModel = CLIP_MODEL_ID;
+        updatedIds.push(a.id);
+      } catch(e) {
+        failed++;
+        console.warn('Empreinte échouée pour', a.desc, ':', e);
+      }
+      done++;
+      result.innerHTML = `<p style="font-size:13px;color:var(--text2)">⏳ Traitement en cours : ${done}/${toProcess.length}${failed ? ` (${failed} échec(s))` : ''}...</p>`;
+    }
+    if(updatedIds.length) { markArticlesDirty(updatedIds); save(); }
+    result.innerHTML = `<p style="font-size:13px;color:var(--success)">✅ ${updatedIds.length} empreinte(s) mise(s) à jour.${failed ? ` ${failed} échec(s) (photo illisible ou introuvable).` : ''}</p>`;
+  } catch(e) {
+    result.innerHTML = `<p style="font-size:13px;color:var(--danger)">⚠️ Échec du chargement du modèle : ${escapeHtml(e && e.message ? e.message : '')}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderPhotoSearchResults(scored) {
+  const body = document.getElementById('photo-search-body');
+  if(!scored.length) {
+    body.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Aucune pièce avec photo n'est disponible pour comparer.</p></div>`;
+    return;
+  }
+  body.innerHTML = `
+    <p style="font-size:12px;color:var(--text3);margin:0 0 12px">Pièces les plus ressemblantes visuellement — classées de la plus probable à la moins probable. Une bonne ressemblance visuelle ne garantit pas qu'il s'agit exactement de la même pièce : vérifie la référence SAP avant de valider.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
+      ${scored.map(({ article: a, score }) => `
+        <div class="article-card" onclick="closeModal('modal-photo-search');openArticleDetail('${a.id}')">
+          <div class="article-img">
+            ${a.photo ? `<img src="${articlePhotoUrl(a,'w_300')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
+            <span class="badge" style="position:absolute;top:8px;right:8px;background:var(--navy);color:white">${Math.round(score * 100)}%</span>
+          </div>
+          <div class="article-body">
+            <div class="article-ref">${escapeHtml(a.sap)}</div>
+            <div class="article-name">${escapeHtml(a.desc)}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
 }
 
 // =============================
