@@ -728,6 +728,20 @@
             <span class="stat-icon">📤</span>
           </div>
         </div>
+        <div class="grid-2 mb-24">
+          <div class="stat-card">
+            <div class="stat-label">Schémas disponibles</div>
+            <div class="stat-value" id="stat-schemas">0</div>
+            <div class="stat-sub">schémas publiés</div>
+            <span class="stat-icon">📐</span>
+          </div>
+          <div class="stat-card" style="cursor:pointer" onclick="showView('schemas')" title="Voir les schémas">
+            <div class="stat-label">Pièces introuvables sur schémas</div>
+            <div class="stat-value" id="stat-schemas-notfound">0</div>
+            <div class="stat-sub">repères ❓ à relier à une fiche SAP</div>
+            <span class="stat-icon">❓</span>
+          </div>
+        </div>
         <div class="card mb-16" style="margin-bottom:18px">
           <div class="section-title">📈 Activité des 7 derniers jours</div>
           <div style="position:relative;height:160px">
@@ -3838,6 +3852,11 @@ function renderDashboard() {
   document.getElementById('stat-orders').textContent = pending;
   document.getElementById('stat-ready').textContent = ready;
   document.getElementById('stat-today').textContent = today;
+
+  const allSchemas = DB.schemas || [];
+  document.getElementById('stat-schemas').textContent = allSchemas.length;
+  const notFoundCount = allSchemas.reduce((s, sc) => s + (sc.hotspots || []).filter(h => h.notFound).length, 0);
+  document.getElementById('stat-schemas-notfound').textContent = notFoundCount;
 
   const recentEl = document.getElementById('recent-orders-list');
   const recent = [...DB.orders].sort((a,b) => b.createdAt - a.createdAt).slice(0,5);
