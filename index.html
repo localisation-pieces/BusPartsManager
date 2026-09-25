@@ -728,6 +728,20 @@
             <span class="stat-icon">📤</span>
           </div>
         </div>
+        <div class="grid-2 mb-24">
+          <div class="stat-card">
+            <div class="stat-label">Schémas disponibles</div>
+            <div class="stat-value" id="stat-schemas">0</div>
+            <div class="stat-sub">schémas publiés</div>
+            <span class="stat-icon">📐</span>
+          </div>
+          <div class="stat-card" style="cursor:pointer" onclick="showView('schemas')" title="Voir les schémas">
+            <div class="stat-label">Pièces introuvables sur schémas</div>
+            <div class="stat-value" id="stat-schemas-notfound">0</div>
+            <div class="stat-sub">repères ❓ à relier à une fiche SAP</div>
+            <span class="stat-icon">❓</span>
+          </div>
+        </div>
         <div class="card mb-16" style="margin-bottom:18px">
           <div class="section-title">📈 Activité des 7 derniers jours</div>
           <div style="position:relative;height:160px">
@@ -1120,6 +1134,13 @@
               en cas de besoin de restauration ou de vérification. Les mots de passe ne sont jamais inclus (gérés uniquement par Firebase).
             </p>
             <button class="btn btn-outline" onclick="exportBackupJSON()">💾 Exporter une sauvegarde complète (JSON)</button>
+            <p style="font-size:13px;color:var(--text2);margin:18px 0 14px">
+              Réinjecte les données d'un fichier de sauvegarde JSON exporté depuis cette application. Les comptes utilisateurs ne sont
+              <strong>jamais</strong> restaurés automatiquement (ils dépendent de Firebase Authentication et doivent être recréés
+              manuellement si besoin) — tu choisis en détail ce qui doit être restauré avant toute action.
+            </p>
+            <input type="file" id="restore-backup-input" accept="application/json,.json" style="display:none" onchange="handleRestoreFileSelect(this.files)">
+            <button class="btn btn-outline" onclick="document.getElementById('restore-backup-input').click()">📤 Restaurer depuis un fichier de sauvegarde</button>
           </div>
         </div>
 
@@ -1502,6 +1523,18 @@
     <div id="category-fix-log" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12.5px;font-family:var(--font-mono)"></div>
     <div style="margin-top:18px;text-align:right">
       <button class="btn btn-outline" id="category-fix-close-btn" onclick="closeModal('modal-category-fix')" disabled>Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-restore-backup">
+  <div class="modal" style="width:640px">
+    <div class="modal-header">
+      <h3>📤 Restaurer une sauvegarde</h3>
+      <button class="modal-close" onclick="closeModal('modal-restore-backup')">✕</button>
+    </div>
+    <div id="restore-backup-body">
+      <p style="font-size:13px;color:var(--text2)">Lecture du fichier...</p>
     </div>
   </div>
 </div>
@@ -3850,6 +3883,11 @@ function renderDashboard() {
   document.getElementById('stat-orders').textContent = pending;
   document.getElementById('stat-ready').textContent = ready;
   document.getElementById('stat-today').textContent = today;
+
+  const allSchemas = DB.schemas || [];
+  document.getElementById('stat-schemas').textContent = allSchemas.length;
+  const notFoundCount = allSchemas.reduce((s, sc) => s + (sc.hotspots || []).filter(h => h.notFound).length, 0);
+  document.getElementById('stat-schemas-notfound').textContent = notFoundCount;
 
   const recentEl = document.getElementById('recent-orders-list');
   const recent = [...DB.orders].sort((a,b) => b.createdAt - a.createdAt).slice(0,5);
@@ -9006,6 +9044,168 @@ function exportBackupJSON() {
   } catch(e) {
     console.error(e);
     alert('🚫 Erreur lors de la sauvegarde : ' + e.message);
+  }
+}
+
+// ---------- Restauration d'une sauvegarde ----------
+// IMPORTANT — pourquoi les utilisateurs ne sont JAMAIS restaurés ici :
+// contrairement aux autres catégories (simples documents/collections
+// Firestore), un compte utilisateur a aussi une moitié invisible dans
+// Firebase Authentication (mot de passe, UID). La sauvegarde JSON ne
+// contient d'ailleurs ni l'un ni l'autre (voir exportBackupJSON). Recréer
+// automatiquement les comptes ici impliquerait de régénérer un mot de passe
+// temporaire pour chaque personne et risquerait de créer des doublons ou
+// des conflits avec des comptes déjà existants (matricule réutilisé,
+// compte réactivé entre-temps...). C'est précisément le risque identifié
+// et volontairement écarté lors de la conception de cette fonctionnalité :
+// on préfère une restauration fiable pour tout le reste plutôt qu'une
+// gestion automatique des comptes qui pourrait mal tourner silencieusement.
+// Pour restaurer un utilisateur, passe par "👥 Gestion des utilisateurs".
+let pendingRestoreBackup = null;
+
+function handleRestoreFileSelect(files) {
+  const file = files && files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    let backup;
+    try {
+      backup = JSON.parse(e.target.result);
+    } catch(err) {
+      alert('🚫 Ce fichier n\'est pas un JSON valide.');
+      document.getElementById('restore-backup-input').value = '';
+      return;
+    }
+    if(!backup || backup.application !== 'BusPartsManager') {
+      alert('🚫 Ce fichier ne ressemble pas à une sauvegarde BusPartsManager (champ "application" manquant ou incorrect).');
+      document.getElementById('restore-backup-input').value = '';
+      return;
+    }
+    pendingRestoreBackup = backup;
+    renderRestoreBackupModal(backup);
+    openModal('modal-restore-backup');
+  };
+  reader.onerror = () => alert('🚫 Impossible de lire ce fichier.');
+  reader.readAsText(file);
+  document.getElementById('restore-backup-input').value = '';
+}
+
+function renderRestoreBackupModal(backup) {
+  const count = (arr) => Array.isArray(arr) ? arr.length : 0;
+  const exportedDate = backup.exporteLe ? new Date(backup.exporteLe).toLocaleString('fr-BE') : 'date inconnue';
+  const reglagesCount = count(backup.magasins) + count(backup.fournisseurs) + count(backup.categories) + count(backup.marques);
+
+  const row = (id, checked, label, detail, danger) => `
+    <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1.5px solid ${danger ? 'var(--danger)' : 'var(--border)'};border-radius:var(--radius);margin-bottom:8px;cursor:pointer;background:${danger ? 'rgba(220,53,69,0.05)' : 'transparent'}">
+      <input type="checkbox" id="${id}" ${checked ? 'checked' : ''} style="margin-top:2px">
+      <span>
+        <span style="font-weight:600;font-size:13.5px">${label}</span><br>
+        <span style="font-size:12.5px;color:var(--text2)">${detail}</span>
+      </span>
+    </label>`;
+
+  document.getElementById('restore-backup-body').innerHTML = `
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
+      Fichier exporté le <strong>${exportedDate}</strong>. Choisis ce qui doit être restauré — chaque catégorie cochée
+      remplacera les données actuellement en ligne par celles du fichier.
+    </p>
+    ${row('restore-cb-articles', true, `📦 Pièces du catalogue (${count(backup.articles)})`,
+      'Ajoute/écrase les pièces présentes dans le fichier ; ne supprime pas les pièces créées depuis la sauvegarde.')}
+    ${row('restore-cb-kits', true, `🧰 Kits de maintenance (${count(backup.kits)})`,
+      'Remplace entièrement la liste actuelle des kits.')}
+    ${row('restore-cb-outils', true, `🛠️ Outillage (${count(backup.outils)})`,
+      'Remplace entièrement la liste actuelle de l\'outillage.')}
+    ${row('restore-cb-reglages', true, `⚙️ Réglages — magasins, fournisseurs, catégories, marques (${reglagesCount})`,
+      'Remplace entièrement ces listes de réglages.')}
+    ${row('restore-cb-commandes', false, `📋 Commandes (${count(backup.commandes)})`,
+      '⚠️ Remplace tout l\'historique actuel des commandes : toute commande créée après cette sauvegarde serait définitivement perdue.', true)}
+    ${row('restore-cb-prets', false, `🔧 Prêts d'outillage (${count(backup.prets)})`,
+      '⚠️ Remplace tout l\'historique actuel des prêts : tout prêt créé après cette sauvegarde serait définitivement perdu.', true)}
+    <p style="font-size:12.5px;color:var(--text2);margin:14px 0;padding:10px 12px;background:var(--bg2,#f5f5f5);border-radius:var(--radius)">
+      👥 Le fichier contient <strong>${count(backup.utilisateurs)} utilisateur(s)</strong>, mais les comptes ne sont
+      <strong>jamais</strong> restaurés automatiquement (voir "👥 Gestion des utilisateurs" pour les recréer à la main si besoin).
+    </p>
+    <div id="restore-backup-log" style="display:none;max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12.5px;font-family:var(--font-mono);margin-bottom:14px"></div>
+    <div style="text-align:right;display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-outline" id="restore-backup-cancel-btn" onclick="closeModal('modal-restore-backup')">Annuler</button>
+      <button class="btn btn-primary" id="restore-backup-confirm-btn" onclick="confirmRestoreBackup()">📤 Restaurer la sélection</button>
+    </div>`;
+}
+
+async function confirmRestoreBackup() {
+  const backup = pendingRestoreBackup;
+  if(!backup) return;
+
+  const wantArticles = document.getElementById('restore-cb-articles').checked;
+  const wantKits = document.getElementById('restore-cb-kits').checked;
+  const wantOutils = document.getElementById('restore-cb-outils').checked;
+  const wantReglages = document.getElementById('restore-cb-reglages').checked;
+  const wantCommandes = document.getElementById('restore-cb-commandes').checked;
+  const wantPrets = document.getElementById('restore-cb-prets').checked;
+
+  if(!wantArticles && !wantKits && !wantOutils && !wantReglages && !wantCommandes && !wantPrets) {
+    alert('Sélectionne au moins une catégorie à restaurer.');
+    return;
+  }
+
+  const destructive = wantCommandes || wantPrets;
+  const confirmMsg = destructive
+    ? '⚠️ Tu as coché au moins une catégorie qui remplace des données pouvant avoir changé depuis la sauvegarde (commandes et/ou prêts). Cette action est irréversible. Continuer ?'
+    : 'Cette action va remplacer les données sélectionnées par celles du fichier. Continuer ?';
+  if(!confirm(confirmMsg)) return;
+
+  const logEl = document.getElementById('restore-backup-log');
+  logEl.style.display = 'block';
+  const log = (msg) => { logEl.innerHTML += msg + '<br>'; logEl.scrollTop = logEl.scrollHeight; };
+
+  document.getElementById('restore-backup-confirm-btn').disabled = true;
+  document.getElementById('restore-backup-cancel-btn').disabled = true;
+
+  try {
+    if(wantArticles) {
+      log('📦 Restauration des pièces...');
+      const res = window.fbSaveArticlesBatch ? await window.fbSaveArticlesBatch(backup.articles || []) : { ok: false, message: 'Firebase indisponible' };
+      log(res.ok ? `✅ ${(backup.articles || []).length} pièce(s) restaurée(s).` : `🚫 Échec (${res.message || 'erreur inconnue'}).`);
+    }
+    if(wantKits) {
+      log('🧰 Restauration des kits...');
+      DB.kits = backup.kits || [];
+      log(`✅ ${DB.kits.length} kit(s) restauré(s).`);
+    }
+    if(wantOutils) {
+      log('🛠️ Restauration de l\'outillage...');
+      DB.tools = backup.outils || [];
+      log(`✅ ${DB.tools.length} outil(s) restauré(s).`);
+    }
+    if(wantReglages) {
+      log('⚙️ Restauration des réglages...');
+      DB.settings = DB.settings || {};
+      DB.settings.magasins = backup.magasins || [];
+      DB.settings.fournisseurs = backup.fournisseurs || [];
+      DB.settings.categories = backup.categories || [];
+      DB.settings.marques = backup.marques || [];
+      log('✅ Réglages restaurés.');
+    }
+    if(wantCommandes) {
+      log('📋 Restauration des commandes...');
+      DB.orders = backup.commandes || [];
+      log(`✅ ${DB.orders.length} commande(s) restaurée(s).`);
+    }
+    if(wantPrets) {
+      log('🔧 Restauration des prêts...');
+      DB.loans = backup.prets || [];
+      log(`✅ ${DB.loans.length} prêt(s) restauré(s).`);
+    }
+    if(wantKits || wantOutils || wantReglages || wantCommandes || wantPrets) {
+      save();
+    }
+    log('🔄 Rechargement de la page dans 2 secondes pour afficher les données restaurées...');
+    setTimeout(() => location.reload(), 2000);
+  } catch(e) {
+    console.error(e);
+    log('🚫 Erreur pendant la restauration : ' + e.message);
+    document.getElementById('restore-backup-confirm-btn').disabled = false;
+    document.getElementById('restore-backup-cancel-btn').disabled = false;
   }
 }
 
