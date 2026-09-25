@@ -781,6 +781,7 @@
               <span>🔍</span>
               <input type="text" placeholder="Rechercher par description, référence SAP, fournisseur, mots-clés..." oninput="debouncedFilterArticles()" id="search-input">
             </div>
+            <button class="btn btn-outline" onclick="openMultiSearchModal()" title="Rechercher plusieurs références SAP ou mots-clés à la fois, et les ajouter au panier en un clic">🔎 Recherche multiple</button>
             <button class="btn btn-outline" onclick="document.getElementById('photo-search-input').click()" title="Rechercher une pièce à partir d'une photo">📷 Rechercher par photo</button>
             <input type="file" id="photo-search-input" accept="image/*" style="display:none" onchange="handlePhotoSearchFile(this)">
             <button id="mobile-filter-toggle" onclick="toggleMobileFilters('catalog-filter-bar', this)">🔽 Filtres</button>
@@ -1827,6 +1828,36 @@
     <div class="modal-body">
       <div id="schema-list-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
       <button class="btn btn-outline staff-only" id="schema-add-btn" style="margin-top:16px;width:100%" onclick="openSchemaEditor(null)">+ Ajouter un schéma pour cet organe</button>
+    </div>
+  </div>
+</div>
+
+<!-- MULTI SEARCH MODAL — colle une liste de références SAP / mots-clés (une par
+     ligne), voit un récap trouvé/ambigu/introuvable par ligne, résout les
+     ambiguïtés via un <select>, puis ajoute d'un coup toutes les pièces
+     retenues au panier -->
+<div class="modal-overlay" id="modal-multi-search">
+  <div class="modal" style="width:min(820px,94vw)">
+    <div class="modal-header">
+      <h3>🔎 Recherche multiple</h3>
+      <button class="modal-close" onclick="closeModal('modal-multi-search')">✕</button>
+    </div>
+    <div class="modal-body">
+      <textarea id="multi-search-textarea" rows="7" placeholder="Colle ici une référence SAP ou un mot-clé par ligne
+Exemple :
+1234567
+FREIN DE SERVICE
+9876543" style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical"></textarea>
+      <div id="multi-search-warning" style="display:none;margin-top:8px;font-size:12px;color:var(--amber-dark)">⚠️ Plus de 200 lignes : la recherche peut prendre quelques instants.</div>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="runMultiSearch()">🔍 Rechercher</button>
+      <div id="multi-search-results" style="display:none;margin-top:16px">
+        <div id="multi-search-summary" style="font-size:12.5px;font-weight:700;color:var(--text2);margin-bottom:8px"></div>
+        <div id="multi-search-list" style="max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius)"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-multi-search')">Fermer</button>
+      <button class="btn btn-primary" id="multi-search-addcart-btn" disabled onclick="addMultiSearchSelectionToCart()">➕ Ajouter les pièces sélectionnées au panier</button>
     </div>
   </div>
 </div>
@@ -4474,6 +4505,180 @@ function addSelectedSchemaArticlesToCart() {
   }
   schemaListSelection = {};
   closeModal('modal-schema-viewer');
+}
+
+// =============================
+// RECHERCHE MULTIPLE (ajout groupé au panier)
+// =============================
+// Colle une liste de références SAP / mots-clés (une entrée par ligne), les
+// recherche une par une dans DB.articles avec exactement la même logique que
+// la recherche catalogue (matchesSearchTerms / computeSearchRelevance), puis
+// permet d'ajouter d'un coup toutes les pièces retenues au panier — sans
+// avoir à ouvrir une fiche à la fois.
+let multiSearchResults = []; // [{ raw, status: 'found'|'ambiguous'|'notfound', matches, selectedId, checked }]
+
+function openMultiSearchModal() {
+  document.getElementById('multi-search-textarea').value = '';
+  document.getElementById('multi-search-results').style.display = 'none';
+  const warn = document.getElementById('multi-search-warning');
+  if(warn) warn.style.display = 'none';
+  multiSearchResults = [];
+  updateMultiSearchAddButton();
+  openModal('modal-multi-search');
+  setTimeout(() => document.getElementById('multi-search-textarea').focus(), 50);
+}
+
+// Cherche toutes les pièces correspondant à une ligne saisie, triées par
+// pertinence — même critère (SAP exact > désignation > mots-clés > reste)
+// que la recherche catalogue, juste appliqué à une ligne à la fois plutôt
+// qu'à la requête globale de la barre de recherche.
+function multiSearchMatchLine(raw) {
+  const q = raw.toLowerCase();
+  const terms = q.split(/[,\s]+/).filter(Boolean);
+  const matches = DB.articles.filter(a => {
+    const text = (a.sap+' '+a.desc+' '+a.fournisseur+' '+a.fournisseurRef+' '+a.keywords+' '+a.emplacement+' '+(a.categorie||'')+' '+(a.marquesBus||[]).join(' ')).toLowerCase();
+    return matchesSearchTerms(text, q);
+  });
+  matches.forEach(a => { a._msScore = computeSearchRelevance(a, terms); });
+  matches.sort((a, b) => b._msScore - a._msScore);
+  return matches;
+}
+
+// Classe une ligne en found / ambiguous / notfound. Un match SAP exact
+// (score >= 1000, cf. computeSearchRelevance) domine clairement les autres
+// résultats et compte comme "trouvé" même si d'autres pièces matchent
+// aussi faiblement le même texte (ex: le SAP apparaît aussi dans une
+// désignation ailleurs).
+function classifyMultiSearchLine(raw) {
+  const matches = multiSearchMatchLine(raw);
+  if(!matches.length) return { status: 'notfound', matches: [] };
+  const dominant = matches[0]._msScore >= 1000 && (matches.length === 1 || matches[1]._msScore < 1000);
+  if(matches.length === 1 || dominant) return { status: 'found', matches };
+  return { status: 'ambiguous', matches: matches.slice(0, 25) };
+}
+
+function runMultiSearch() {
+  const raw = document.getElementById('multi-search-textarea').value;
+  // Le retour à ligne reste le séparateur principal ; virgule et tabulation
+  // sont aussi acceptées pour du texte collé qui les utiliserait à la place.
+  const lines = raw.split(/\r?\n/).flatMap(l => l.split(/[,\t]+/)).map(s => s.trim()).filter(Boolean);
+  if(!lines.length) { showNotif('⚠️', 'Recherche multiple', 'Colle au moins une référence ou un mot-clé.'); return; }
+
+  const warn = document.getElementById('multi-search-warning');
+  if(warn) warn.style.display = lines.length > 200 ? '' : 'none';
+
+  multiSearchResults = lines.map(line => {
+    const cls = classifyMultiSearchLine(line);
+    const topId = cls.matches[0] ? cls.matches[0].id : null;
+    return {
+      raw: line,
+      status: cls.status,
+      matches: cls.matches,
+      selectedId: topId,          // pièce candidate pré-sélectionnée (found ou ambiguous)
+      checked: cls.status === 'found' // les "found" sont inclus par défaut ; les "ambiguous" via leur <select>
+    };
+  });
+  renderMultiSearchResults();
+}
+
+function renderMultiSearchResults() {
+  const found = multiSearchResults.filter(r => r.status === 'found').length;
+  const ambiguous = multiSearchResults.filter(r => r.status === 'ambiguous').length;
+  const notfound = multiSearchResults.filter(r => r.status === 'notfound').length;
+  document.getElementById('multi-search-summary').textContent =
+    `${found} trouvée${found>1?'s':''} / ${ambiguous} ambiguë${ambiguous>1?'s':''} / ${notfound} introuvable${notfound>1?'s':''} sur ${multiSearchResults.length} ligne${multiSearchResults.length>1?'s':''}`;
+
+  document.getElementById('multi-search-list').innerHTML = multiSearchResults.map((r, i) => renderMultiSearchRow(r, i)).join('');
+  document.getElementById('multi-search-results').style.display = '';
+  updateMultiSearchAddButton();
+}
+
+function renderMultiSearchRow(r, i) {
+  const badge = r.status === 'found' ? '<span class="badge badge-green">✅ Trouvé</span>'
+    : r.status === 'ambiguous' ? '<span class="badge badge-amber">⚠️ Ambigu</span>'
+    : '<span class="badge badge-red">❌ Introuvable</span>';
+
+  let action;
+  if(r.status === 'found') {
+    const a = r.matches[0];
+    action = `<label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" ${r.checked?'checked':''} onchange="toggleMultiSearchChecked(${i}, this.checked)">
+      <span style="font-size:12.5px"><b>${escapeHtml(a.desc)}</b> — SAP ${escapeHtml(a.sap)}</span>
+    </label>`;
+  } else if(r.status === 'ambiguous') {
+    action = `<select onchange="setMultiSearchSelection(${i}, this.value)" style="width:100%;max-width:420px;padding:6px 8px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:12px">
+      ${r.matches.map(a => `<option value="${a.id}" ${a.id===r.selectedId?'selected':''}>${escapeHtml(a.sap)} — ${escapeHtml(a.desc)}</option>`).join('')}
+      <option value="" ${!r.selectedId?'selected':''}>Ne pas ajouter</option>
+    </select>`;
+  } else {
+    action = `<span style="color:var(--text3);font-size:12px">Aucune correspondance — <a href="#" onclick="tryMultiSearchManual(event, ${i})" style="color:var(--primary)">essayer une recherche manuelle</a></span>`;
+  }
+
+  return `<div style="display:flex;align-items:center;gap:12px;padding:9px 10px;border-bottom:1px solid var(--border)">
+    <div style="flex:0 0 150px;font-size:12px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)" title="${escapeHtml(r.raw)}">${escapeHtml(r.raw)}</div>
+    <div style="flex:0 0 auto">${badge}</div>
+    <div style="flex:1;min-width:0">${action}</div>
+  </div>`;
+}
+
+function toggleMultiSearchChecked(i, checked) {
+  multiSearchResults[i].checked = checked;
+  updateMultiSearchAddButton();
+}
+
+function setMultiSearchSelection(i, id) {
+  multiSearchResults[i].selectedId = id || null;
+  updateMultiSearchAddButton();
+}
+
+function tryMultiSearchManual(e, i) {
+  e.preventDefault();
+  const raw = multiSearchResults[i].raw;
+  closeModal('modal-multi-search');
+  showView('catalog');
+  const input = document.getElementById('search-input');
+  input.value = raw;
+  filterArticles();
+  input.focus();
+}
+
+function multiSearchSelectedIds() {
+  const ids = [];
+  multiSearchResults.forEach(r => {
+    if(r.status === 'found' && r.checked && r.matches[0]) ids.push(r.matches[0].id);
+    else if(r.status === 'ambiguous' && r.selectedId) ids.push(r.selectedId);
+  });
+  return ids;
+}
+
+function updateMultiSearchAddButton() {
+  const btn = document.getElementById('multi-search-addcart-btn');
+  if(!btn) return;
+  const n = multiSearchSelectedIds().length;
+  btn.disabled = n === 0;
+  btn.textContent = n > 0 ? `➕ Ajouter les ${n} pièce${n>1?'s':''} sélectionnée${n>1?'s':''} au panier` : '➕ Ajouter les pièces sélectionnées au panier';
+}
+
+// Ajoute d'un coup toutes les pièces retenues (cochées / choisies) au
+// panier, avec la même logique de doublon que le reste de l'appli (qty
+// existante incrémentée plutôt que ligne dupliquée).
+function addMultiSearchSelectionToCart() {
+  const ids = multiSearchSelectedIds();
+  if(!ids.length) return;
+  ids.forEach(id => {
+    const existing = cart.find(c => c.id === id);
+    if(existing) existing.qty += 1;
+    else cart.push({ id, qty: 1 });
+  });
+  updateCartBadge();
+  saveCart();
+  showNotif('🛒', 'Ajouté au panier', `${ids.length} pièce${ids.length>1?'s':''} ajoutée${ids.length>1?'s':''} au panier`);
+  if(ids.length === 1) {
+    const a = DB.articles.find(x => x.id === ids[0]);
+    if(a) tryLearnKeywordFromFailedSearch(a);
+  }
+  multiSearchResults = [];
+  closeModal('modal-multi-search');
 }
 
 function populateFournisseurFilter() {
