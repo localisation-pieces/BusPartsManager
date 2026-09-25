@@ -783,6 +783,7 @@
             </div>
             <button class="btn btn-outline" onclick="document.getElementById('photo-search-input').click()" title="Rechercher une pièce à partir d'une photo">📷 Rechercher par photo</button>
             <input type="file" id="photo-search-input" accept="image/*" style="display:none" onchange="handlePhotoSearchFile(this)">
+            <button class="btn btn-outline" onclick="openMultiSearchModal()" title="Rechercher plusieurs références SAP ou mots-clés d'un coup">🔎 Recherche multiple</button>
             <button id="mobile-filter-toggle" onclick="toggleMobileFilters('catalog-filter-bar', this)">🔽 Filtres</button>
           </div>
           <div class="filter-bar" id="catalog-filter-bar" style="margin:0;gap:8px;">
@@ -1447,6 +1448,29 @@
       <button class="modal-close" onclick="closeModal('modal-photo-search')">✕</button>
     </div>
     <div class="modal-body" id="photo-search-body" style="min-height:160px"></div>
+  </div>
+</div>
+
+<!-- MULTI SEARCH MODAL — colle une liste de références SAP / mots-clés (une
+     par ligne), résout chaque ligne dans DB.articles, laisse résoudre les
+     ambiguïtés, puis ajoute tout au panier en un clic. Voir
+     openMultiSearchModal / runMultiSearch / addMultiSearchSelectionToCart. -->
+<div class="modal-overlay" id="modal-multi-search">
+  <div class="modal" style="width:720px">
+    <div class="modal-header">
+      <h3>🔎 Recherche multiple</h3>
+      <button class="modal-close" onclick="closeModal('modal-multi-search')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text3);margin:0 0 8px">Colle une référence SAP ou un mot-clé par ligne.</p>
+      <textarea id="multi-search-input" rows="6" placeholder="Colle ici une référence SAP ou un mot-clé par ligne&#10;Exemple :&#10;1234567&#10;FREIN DE SERVICE&#10;9876543" style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical"></textarea>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="runMultiSearch()">Rechercher</button>
+      <div id="multi-search-results" style="margin-top:16px"></div>
+    </div>
+    <div class="modal-footer" id="multi-search-footer" style="display:none">
+      <button class="btn btn-outline" onclick="closeModal('modal-multi-search')">Fermer</button>
+      <button class="btn btn-primary" id="multi-search-add-btn" onclick="addMultiSearchSelectionToCart()"></button>
+    </div>
   </div>
 </div>
 
@@ -5093,6 +5117,151 @@ function updateCartBadge() {
   if(navBadge) { navBadge.textContent = total; navBadge.style.display = total > 0 ? '' : 'none'; }
   const bnBadge = document.getElementById('bn-cart-badge');
   if(bnBadge) { bnBadge.textContent = total; bnBadge.style.display = total > 0 ? 'flex' : 'none'; }
+}
+
+// =============================
+// RECHERCHE MULTIPLE — colle une liste de références SAP / mots-clés (une
+// par ligne) et ajoute d'un coup toutes les pièces trouvées au panier.
+// Réutilise matchesSearchTerms/computeSearchRelevance (recherche catalogue)
+// et le même mécanisme d'ajout au panier que addToCart/addToCartFromCard —
+// aucune nouvelle logique de matching ni de panier, juste orchestré ici.
+// =============================
+let multiSearchLines = [];
+
+function openMultiSearchModal() {
+  multiSearchLines = [];
+  document.getElementById('multi-search-input').value = '';
+  document.getElementById('multi-search-results').innerHTML = '';
+  document.getElementById('multi-search-footer').style.display = 'none';
+  openModal('modal-multi-search');
+  document.getElementById('multi-search-input').focus();
+}
+
+// Une ligne = une recherche indépendante. SAP exact d'abord (unique par
+// construction — voir le contrôle anti-doublon de saveArticle), sinon
+// désignation/mots-clés via la même fonction que la recherche catalogue.
+function classifyMultiSearchLine(raw) {
+  const line = raw.trim();
+  const sapMatch = DB.articles.find(a => a.sap === line);
+  if(sapMatch) return { raw, status: 'found', candidates: [sapMatch] };
+
+  const matches = DB.articles.filter(a => matchesSearchTerms(((a.desc||'') + ' ' + (a.keywords||'')).toLowerCase(), line));
+  if(!matches.length) return { raw, status: 'notfound', candidates: [] };
+  if(matches.length === 1) return { raw, status: 'found', candidates: matches };
+
+  const terms = line.toLowerCase().split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+  matches.sort((a, b) => computeSearchRelevance(b, terms) - computeSearchRelevance(a, terms));
+  return { raw, status: 'ambiguous', candidates: matches.slice(0, 15) };
+}
+
+function runMultiSearch() {
+  const raw = document.getElementById('multi-search-input').value;
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+  const resultsEl = document.getElementById('multi-search-results');
+  if(!lines.length) { resultsEl.innerHTML = '<p style="font-size:13px;color:var(--text3)">Colle au moins une ligne à rechercher.</p>'; document.getElementById('multi-search-footer').style.display = 'none'; return; }
+
+  const warn = lines.length > 200 ? `<p style="font-size:12px;color:var(--amber-dark);margin-bottom:10px">⚠️ ${lines.length} lignes — le traitement peut prendre quelques secondes.</p>` : '';
+
+  multiSearchLines = lines.map(classifyMultiSearchLine).map(l => ({
+    ...l,
+    // "found" pré-sélectionné ; "ambiguous" pré-sélectionne le candidat le
+    // plus pertinent (l'utilisateur peut changer ou choisir "Ne pas ajouter").
+    selectedId: l.status !== 'notfound' ? l.candidates[0].id : null
+  }));
+
+  renderMultiSearchResults(warn);
+}
+
+function renderMultiSearchResults(warnHtml) {
+  const resultsEl = document.getElementById('multi-search-results');
+  const found = multiSearchLines.filter(l => l.status === 'found').length;
+  const ambiguous = multiSearchLines.filter(l => l.status === 'ambiguous').length;
+  const notfound = multiSearchLines.filter(l => l.status === 'notfound').length;
+
+  const rows = multiSearchLines.map((l, i) => {
+    if(l.status === 'found') {
+      const a = l.candidates[0];
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <input type="checkbox" ${l.selectedId ? 'checked' : ''} onchange="toggleMultiSearchLine(${i}, this.checked)" style="flex-shrink:0">
+          <span class="badge" style="background:var(--success-light);color:var(--success);flex-shrink:0">✅ Trouvé</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:var(--text3)">${escapeHtml(l.raw)}</div>
+            <div style="font-size:13px;font-weight:600">${escapeHtml(a.desc)} <span style="color:var(--text3);font-weight:400">(${escapeHtml(a.sap)})</span></div>
+          </div>
+        </div>`;
+    }
+    if(l.status === 'ambiguous') {
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <span class="badge" style="background:var(--amber-light);color:var(--amber-dark);flex-shrink:0">⚠️ Ambigu</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;color:var(--text3)">${escapeHtml(l.raw)} — ${l.candidates.length} résultats possibles</div>
+            <select onchange="setMultiSearchSelection(${i}, this.value)" style="width:100%;margin-top:3px;padding:6px 8px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:12.5px">
+              ${l.candidates.map(a => `<option value="${a.id}" ${l.selectedId === a.id ? 'selected' : ''}>${escapeHtml(a.sap)} — ${escapeHtml(a.desc)}</option>`).join('')}
+              <option value="" ${l.selectedId === null ? 'selected' : ''}>— Ne pas ajouter —</option>
+            </select>
+          </div>
+        </div>`;
+    }
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);opacity:0.7">
+        <span class="badge" style="background:var(--danger-light);color:var(--danger);flex-shrink:0">❌ Introuvable</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px">${escapeHtml(l.raw)}</div>
+          <a href="javascript:void(0)" onclick="useMultiSearchLineInCatalog('${l.raw.replace(/'/g,"\\'")}')" style="font-size:11.5px">essayer une recherche manuelle</a>
+        </div>
+      </div>`;
+  }).join('');
+
+  resultsEl.innerHTML = `
+    ${warnHtml || ''}
+    <p style="font-size:13px;font-weight:600;margin-bottom:8px">${found} trouvée(s) / ${ambiguous} ambiguë(s) / ${notfound} introuvable(s) sur ${multiSearchLines.length} ligne(s)</p>
+    <div>${rows}</div>`;
+
+  document.getElementById('multi-search-footer').style.display = multiSearchLines.length ? 'flex' : 'none';
+  updateMultiSearchAddButton();
+}
+
+function toggleMultiSearchLine(index, checked) {
+  const l = multiSearchLines[index];
+  l.selectedId = checked ? l.candidates[0].id : null;
+  updateMultiSearchAddButton();
+}
+
+function setMultiSearchSelection(index, articleId) {
+  multiSearchLines[index].selectedId = articleId || null;
+  updateMultiSearchAddButton();
+}
+
+function updateMultiSearchAddButton() {
+  const n = multiSearchLines.filter(l => l.selectedId).length;
+  const btn = document.getElementById('multi-search-add-btn');
+  btn.textContent = `➕ Ajouter les ${n} pièce(s) sélectionnée(s) au panier`;
+  btn.disabled = n === 0;
+}
+
+function useMultiSearchLineInCatalog(text) {
+  closeModal('modal-multi-search');
+  const input = document.getElementById('search-input');
+  input.value = text;
+  filterArticles();
+}
+
+// Même logique d'ajout que addToCart/addToCartFromCard (incrémente si déjà
+// présent), juste répétée pour chaque pièce retenue.
+function addMultiSearchSelectionToCart() {
+  const ids = multiSearchLines.filter(l => l.selectedId).map(l => l.selectedId);
+  if(!ids.length) return;
+  ids.forEach(id => {
+    const existing = cart.find(c => c.id === id);
+    if(existing) existing.qty += 1;
+    else cart.push({ id, qty: 1 });
+  });
+  updateCartBadge();
+  saveCart();
+  closeModal('modal-multi-search');
+  showNotif('🛒', 'Ajout au panier', `${ids.length} pièce(s) ajoutée(s) au panier`);
 }
 
 // =============================
