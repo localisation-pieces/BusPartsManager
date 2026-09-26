@@ -5228,6 +5228,7 @@ function renderMultiSearchResults(warnHtml) {
             <div style="font-size:11px;color:var(--text3)">${escapeHtml(l.raw)}</div>
             <div style="font-size:13px;font-weight:600">${escapeHtml(a.desc)} <span style="color:var(--text3);font-weight:400">(${escapeHtml(a.sap)})</span></div>
           </div>
+          <button class="btn btn-outline" style="flex-shrink:0;padding:5px 10px;font-size:12px" onclick="openArticleDetail('${a.id}')">👁️ Afficher</button>
         </div>`;
     }
     if(l.status === 'ambiguous') {
@@ -5241,6 +5242,7 @@ function renderMultiSearchResults(warnHtml) {
               <option value="" ${l.selectedId === null ? 'selected' : ''}>— Ne pas ajouter —</option>
             </select>
           </div>
+          ${l.selectedId ? `<button class="btn btn-outline" style="flex-shrink:0;padding:5px 10px;font-size:12px" onclick="openArticleDetail('${l.selectedId}')">👁️ Afficher</button>` : ''}
         </div>`;
     }
     return `
