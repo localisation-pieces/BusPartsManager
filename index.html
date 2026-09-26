@@ -816,6 +816,7 @@
               <option value="">Tous fournisseurs</option>
             </select>
             <input type="text" class="filter-select" id="filter-fournisseur-ref" placeholder="🔎 Réf. fournisseur..." oninput="debouncedFilterArticles()" style="min-width:150px">
+            <input type="text" class="filter-select" id="filter-emplacement" placeholder="📍 Emplacement..." oninput="debouncedFilterArticles()" style="min-width:150px">
             <select class="filter-select" id="filter-type" onchange="filterArticles()">
               <option value="">Caractéristiques</option>
               <option value="serialise">Sérialisé</option>
@@ -4567,6 +4568,15 @@ const FRENCH_STOPWORDS = new Set(['de','du','des','la','le','les','un','une','et
 // de désignation ("DISQUE DE FREIN...") est encore plus fort qu'un mot
 // trouvé au milieu — ça remonte naturellement les correspondances les plus
 // évidentes en premier au lieu d'un ordre quasi aléatoire.
+// Vrai si `term` apparaît comme un MOT ENTIER dans `text` (délimité par des
+// séparateurs, pas juste une sous-chaîne perdue dans un autre mot) — sert à
+// départager par exemple "AR" (arrière) trouvé tel quel, de "AR" simplement
+// contenu dans "BARRE" ou "MARQUE", qui ne devrait pas remonter aussi fort.
+function isWholeWordMatch(text, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9à-ÿ])${escaped}([^a-z0-9à-ÿ]|$)`, 'i').test(text);
+}
+
 function computeSearchRelevance(a, terms) {
   let score = 0;
   const sap = (a.sap || '').toLowerCase();
@@ -4581,6 +4591,11 @@ function computeSearchRelevance(a, terms) {
     if(desc.includes(term)) {
       score += 50;
       if(desc.startsWith(term)) score += 20;
+      // Un mot entier trouvé dans la désignation compte bien plus qu'une
+      // sous-chaîne accidentelle (ex: "ar" recherché, trouvé "perdu" dans
+      // "barre") — sans ça, les recherches sur des termes courts/abrégés
+      // remontaient trop de faux positifs avant le bon résultat.
+      if(isWholeWordMatch(desc, term)) score += 40;
     }
     if(keywords.includes(term)) score += 30;
     if(fournisseurRef.includes(term)) score += 10;
@@ -4649,6 +4664,8 @@ function resetCatalogFilters() {
   if(catSearch) catSearch.value = '';
   const refInput = document.getElementById('filter-fournisseur-ref');
   if(refInput) refInput.value = '';
+  const emplacementInput = document.getElementById('filter-emplacement');
+  if(emplacementInput) emplacementInput.value = '';
   filterArticles();
 }
 
@@ -4662,11 +4679,12 @@ function filterArticles() {
   const marque = document.getElementById('filter-marque') ? document.getElementById('filter-marque').value : '';
   const fournisseur = document.getElementById('filter-fournisseur') ? document.getElementById('filter-fournisseur').value : '';
   const fournisseurRefQuery = document.getElementById('filter-fournisseur-ref') ? document.getElementById('filter-fournisseur-ref').value.trim().toLowerCase() : '';
+  const emplacementQuery = document.getElementById('filter-emplacement') ? document.getElementById('filter-emplacement').value.trim().toLowerCase() : '';
   const sort = document.getElementById('filter-sort') ? document.getElementById('filter-sort').value : '';
 
   const resetBtn = document.getElementById('reset-filters-btn');
   if(resetBtn) {
-    const hasActiveFilter = !!(mag || bus || type || marque || selectedCategoryFilters.size || fournisseur || fournisseurRefQuery);
+    const hasActiveFilter = !!(mag || bus || type || marque || selectedCategoryFilters.size || fournisseur || fournisseurRefQuery || emplacementQuery);
     resetBtn.style.display = hasActiveFilter ? '' : 'none';
   }
 
@@ -4688,6 +4706,7 @@ function filterArticles() {
     if(selectedCategoryFilters.size && !articleCategories(a).some(c => selectedCategoryFilters.has(c))) return false;
     if(fournisseur && a.fournisseur !== fournisseur) return false;
     if(fournisseurRefQuery && !(a.fournisseurRef||'').toLowerCase().includes(fournisseurRefQuery)) return false;
+    if(emplacementQuery && !(a.emplacement||'').toLowerCase().includes(emplacementQuery)) return false;
     return true;
   });
 
@@ -4849,7 +4868,24 @@ function renderArticleGrid(q) {
   const visible = arts.slice(0, catalogRenderLimit);
   const remaining = arts.length - visible.length;
 
-  grid.innerHTML = visible.map(a => `
+  // Peu de résultats peut aussi trahir une faute de frappe (juste moins
+  // radicalement que zéro résultat) — ex: une lettre en trop qui ne laisse
+  // matcher qu'1-2 pièces au lieu de toutes celles réellement voulues. On
+  // propose alors aussi "Vouliez-vous dire", en plus des résultats trouvés
+  // (pas à la place), pour ne jamais cacher un vrai résultat.
+  let lowResultsHint = '';
+  if(q && q.trim() && arts.length <= 2) {
+    const suggestions = getFuzzySuggestions(q);
+    if(suggestions.length) {
+      lowResultsHint = `
+        <div style="grid-column:1/-1;padding:10px 14px;background:var(--surface2);border-radius:var(--radius);margin-bottom:4px;font-size:12.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="color:var(--text2)">Peu de résultats — vouliez-vous dire :</span>
+          ${suggestions.map(s => `<button class="btn btn-outline btn-sm" onclick="useFuzzySuggestion('${s.word.replace(/'/g,"\\'")}')">${escapeHtml(s.word)} <span style="color:var(--text3);font-weight:400">(${s.count})</span></button>`).join('')}
+        </div>`;
+    }
+  }
+
+  grid.innerHTML = lowResultsHint + visible.map(a => `
     <div class="article-card" onclick="if(!(window.getSelection&&window.getSelection().toString()))openArticleDetail('${a.id}')">
       <div class="article-img" ${a.photo ? `onclick="openArticlePhotoZoom('${a.id}', event)" style="cursor:zoom-in"` : ''}>
         ${a.photo ? `<img src="${articlePhotoUrl(a,'w_500')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}
@@ -11095,6 +11131,18 @@ function globalSearch() {
     action:`closeGlobalSearch();openArticleDetail('${a.id}')`
   }));
 
+  // Schémas — sans ça, la recherche globale ne remontait jamais l'outil
+  // principal de localisation visuelle : il fallait déjà être sur la fiche
+  // d'une pièce pour voir ses schémas liés, impossible de chercher
+  // directement "moyeu de roue" et retomber sur le bon schéma.
+  (DB.schemas || []).filter(s => {
+    const text = ((s.titre||'')+' '+(s.categorie||'')+' '+(s.cheminCatalogue||'')).toLowerCase();
+    return matchesSearchTerms(text, q);
+  }).slice(0,4).forEach(s => results.push({
+    type:'schema', icon:'📐', title:escapeHtml(s.titre), sub:`${escapeHtml(s.categorie)}${s.cheminCatalogue ? ' · '+escapeHtml(s.cheminCatalogue) : ''}`,
+    action:`closeGlobalSearch();openSchemaViewer('${s.id}')`
+  }));
+
   // Commandes
   DB.orders.filter(o => {
     const text = (o.agentName+' '+o.matricule+' '+o.busNumero+' '+(o.otNumber||'')+' '+o.id).toLowerCase();
@@ -11126,8 +11174,8 @@ function globalSearch() {
     }));
   }
 
-  const typeLabels = { article:'Pièce', commande:'Commande', outil:'Outil', utilisateur:'Utilisateur' };
-  const typeColors = { article:'var(--info)', commande:'var(--amber-dark)', outil:'var(--success)', utilisateur:'var(--navy)' };
+  const typeLabels = { article:'Pièce', schema:'Schéma', commande:'Commande', outil:'Outil', utilisateur:'Utilisateur' };
+  const typeColors = { article:'var(--info)', schema:'var(--primary)', commande:'var(--amber-dark)', outil:'var(--success)', utilisateur:'var(--navy)' };
 
   if(!results.length) {
     box.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">Aucun résultat pour "${escapeHtml(q)}"</div>`;
