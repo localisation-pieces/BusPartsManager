@@ -1490,6 +1490,7 @@
     </div>
     <div class="modal-footer" id="multi-search-footer" style="display:none">
       <button class="btn btn-outline" onclick="closeModal('modal-multi-search')">Fermer</button>
+      <button class="btn btn-outline" onclick="showMultiSearchResultsInCatalog()" title="Affiche toutes les pièces trouvées dans la vue catalogue habituelle (photos, fiches complètes...)">🗂️ Afficher par article</button>
       <button class="btn btn-primary" id="multi-search-add-btn" onclick="addMultiSearchSelectionToCart()"></button>
     </div>
   </div>
@@ -5300,6 +5301,33 @@ function addMultiSearchSelectionToCart() {
   saveCart();
   closeModal('modal-multi-search');
   showNotif('🛒', 'Ajout au panier', `${ids.length} pièce(s) ajoutée(s) au panier`);
+}
+
+// Affiche toutes les pièces trouvées (une seule pour les lignes "found", et
+// TOUS les candidats pour les lignes "ambiguous" — pas juste celui coché
+// dans le <select>, pour laisser aussi choisir visuellement en cliquant sur
+// une fiche) dans la grille catalogue habituelle, avec photos et fiches
+// complètes, plutôt que la liste condensée de la modale. Vue temporaire :
+// dès que l'utilisateur retouche la recherche/un filtre du catalogue,
+// filterArticles() reprend la main normalement.
+function showMultiSearchResultsInCatalog() {
+  const ids = new Set();
+  multiSearchLines.forEach(l => {
+    if(l.status === 'notfound') return;
+    l.candidates.forEach(a => ids.add(a.id));
+  });
+  const arts = DB.articles.filter(a => ids.has(a.id));
+  if(!arts.length) { showNotif('🔍', 'Rien à afficher', 'Aucune pièce trouvée dans cette recherche.'); return; }
+
+  closeModal('modal-multi-search');
+  showView('catalog');
+
+  document.getElementById('search-input').value = '';
+  catalogRotationMap = null;
+  catalogFilteredArts = arts;
+  catalogRenderLimit = CATALOG_PAGE_SIZE;
+  renderArticleGrid('');
+  showNotif('🗂️', 'Résultats affichés', `${arts.length} pièce(s) trouvée(s) via la recherche multiple`);
 }
 
 // =============================
