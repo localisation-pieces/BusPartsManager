@@ -4334,17 +4334,26 @@ function openSchemaViewer(schemaId, highlightArticleId) {
   if(!s) return;
   currentSchemaId = schemaId;
 
-  // Flèches précédent/suivant : uniquement actives si ce schéma fait partie
-  // d'une navigation "voir tous les schémas de cette pièce" en cours — sinon
-  // ouvrir un schéma au hasard depuis le catalogue afficherait des flèches
-  // qui n'ont pas de sens dans ce contexte.
-  const inNavContext = articleSchemaNavList.length > 1 && articleSchemaNavList.includes(schemaId);
+  // Flèches précédent/suivant : actives si ce schéma fait partie d'une
+  // navigation "voir tous les schémas de cette pièce" (priorité), ou sinon
+  // de la liste actuellement parcourue sur la page Schémas — sinon ouvrir un
+  // schéma au hasard depuis le catalogue afficherait des flèches qui n'ont
+  // pas de sens dans ce contexte.
+  const inArticleNav = articleSchemaNavList.length > 1 && articleSchemaNavList.includes(schemaId);
+  const inBrowseNav = !inArticleNav && schemaBrowseNavList.length > 1 && schemaBrowseNavList.includes(schemaId);
+  const inNavContext = inArticleNav || inBrowseNav;
   const prevBtn = document.getElementById('schema-viewer-prev-btn');
   const nextBtn = document.getElementById('schema-viewer-next-btn');
-  if(inNavContext) articleSchemaNavIndex = articleSchemaNavList.indexOf(schemaId);
+  if(inArticleNav) articleSchemaNavIndex = articleSchemaNavList.indexOf(schemaId);
+  else if(inBrowseNav) schemaBrowseNavIndex = schemaBrowseNavList.indexOf(schemaId);
   prevBtn.style.display = inNavContext ? '' : 'none';
   nextBtn.style.display = inNavContext ? '' : 'none';
-  const positionSuffix = inNavContext ? ` (${articleSchemaNavIndex + 1}/${articleSchemaNavList.length})` : '';
+  const navTitle = inArticleNav ? 'lié à cette pièce' : 'dans la liste affichée';
+  prevBtn.title = `Schéma précédent ${navTitle}`;
+  nextBtn.title = `Schéma suivant ${navTitle}`;
+  const navTotal = inArticleNav ? articleSchemaNavList.length : schemaBrowseNavList.length;
+  const navIndex = inArticleNav ? articleSchemaNavIndex : schemaBrowseNavIndex;
+  const positionSuffix = inNavContext ? ` (${navIndex + 1}/${navTotal})` : '';
 
   document.getElementById('schema-viewer-title').innerHTML = `📐 ${highlightParens(s.titre)}${escapeHtml(positionSuffix)}`;
   const cheminEl = document.getElementById('schema-viewer-chemin');
@@ -4573,19 +4582,21 @@ const FRENCH_STOPWORDS = new Set(['de','du','des','la','le','les','un','une','et
 // départager par exemple "AR" (arrière) trouvé tel quel, de "AR" simplement
 // contenu dans "BARRE" ou "MARQUE", qui ne devrait pas remonter aussi fort.
 function isWholeWordMatch(text, term) {
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9à-ÿ])${escaped}([^a-z0-9à-ÿ]|$)`, 'i').test(text);
+  const normText = normalizeAccents(text);
+  const escaped = normalizeAccents(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(normText);
 }
 
 function computeSearchRelevance(a, terms) {
   let score = 0;
-  const sap = (a.sap || '').toLowerCase();
-  const desc = (a.desc || '').toLowerCase();
-  const keywords = (a.keywords || '').toLowerCase();
-  const fournisseurRef = (a.fournisseurRef || '').toLowerCase();
-  const reste = ((a.fournisseur||'') + ' ' + (a.emplacement||'') + ' ' + (a.categorie||'') + ' ' + (a.marquesBus||[]).join(' ')).toLowerCase();
+  const sap = normalizeAccents((a.sap || '').toLowerCase());
+  const desc = normalizeAccents((a.desc || '').toLowerCase());
+  const keywords = normalizeAccents((a.keywords || '').toLowerCase());
+  const fournisseurRef = normalizeAccents((a.fournisseurRef || '').toLowerCase());
+  const reste = normalizeAccents(((a.fournisseur||'') + ' ' + (a.emplacement||'') + ' ' + (a.categorie||'') + ' ' + (a.marquesBus||[]).join(' ')).toLowerCase());
 
-  terms.forEach(term => {
+  terms.forEach(rawTerm => {
+    const term = normalizeAccents(rawTerm);
     if(sap === term) score += 1000; // SAP exact = quasiment certainement ce qui est cherché
     else if(sap.includes(term)) score += 200;
     if(desc.includes(term)) {
@@ -4604,14 +4615,24 @@ function computeSearchRelevance(a, terms) {
   return score;
 }
 
+// Retire les accents (é->e, ê->e, à->a...) pour que la recherche fonctionne
+// même tapée sans accents — courant sur mobile/tablette, où les claviers
+// rendent les accents pénibles à taper. S'applique aussi bien au texte
+// cherché qu'au texte des fiches, donc les deux se retrouvent toujours sur
+// un pied d'égalité peu importe comment chacun a été tapé/saisi à l'origine.
+function normalizeAccents(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 function matchesSearchTerms(text, query) {
-  let terms = query.split(/[,\s]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+  const normText = normalizeAccents(text);
+  let terms = query.split(/[,\s]+/).map(t => normalizeAccents(t.trim().toLowerCase())).filter(Boolean);
   const meaningful = terms.filter(t => !FRENCH_STOPWORDS.has(t));
   // Si TOUT était des mots de liaison (cas limite improbable, ex: recherche
   // "de"), on les garde plutôt que de tout faire matcher par erreur.
   if(meaningful.length) terms = meaningful;
   if(!terms.length) return true;
-  return terms.every(term => text.includes(term));
+  return terms.every(term => normText.includes(term));
 }
 
 // Rotation d'une pièce = quantité totale sortie sur TOUT l'historique des
@@ -4834,6 +4855,12 @@ function useFuzzySuggestion(word) {
   document.getElementById('search-input').value = word;
   filterArticles();
 }
+
+function useSchemaFuzzySuggestion(word) {
+  const input = document.getElementById('schemas-page-search');
+  if(input) input.value = word;
+  renderSchemasPage();
+}
 let catalogFilteredArts = [];
 let catalogRenderLimit = CATALOG_PAGE_SIZE;
 let catalogRotationMap = null; // non-null uniquement quand le tri "Rotation" est actif
@@ -4988,6 +5015,14 @@ let articleSchemaNavList = [];
 let articleSchemaNavIndex = 0;
 let articleSchemaNavArticleId = null;
 
+// Même principe, mais pour feuilleter tous les schémas actuellement
+// affichés sur la page Schémas (organe + recherche en cours), rempli par
+// renderSchemasPage() — permet de parcourir plusieurs diagrammes d'un
+// organe à la suite, sans revenir à la liste entre chaque, quand on cherche
+// une pièce visuellement sans savoir sur quel schéma précis elle se trouve.
+let schemaBrowseNavList = [];
+let schemaBrowseNavIndex = 0;
+
 function openAllArticleSchemas(articleId) {
   const schemas = (DB.schemas || []).filter(s => (s.hotspots || []).some(h => h.articleId === articleId));
   if(!schemas.length) return;
@@ -4999,9 +5034,16 @@ function openAllArticleSchemas(articleId) {
 }
 
 function navigateArticleSchemas(direction) {
-  if(!articleSchemaNavList.length) return;
-  articleSchemaNavIndex = (articleSchemaNavIndex + direction + articleSchemaNavList.length) % articleSchemaNavList.length;
-  openSchemaViewer(articleSchemaNavList[articleSchemaNavIndex], articleSchemaNavArticleId);
+  // Priorité au contexte "schémas d'une pièce" s'il est actif pour le
+  // schéma actuellement ouvert, sinon on avance dans la liste de parcours
+  // de la page Schémas.
+  if(articleSchemaNavList.length > 1 && articleSchemaNavList.includes(currentSchemaId)) {
+    articleSchemaNavIndex = (articleSchemaNavIndex + direction + articleSchemaNavList.length) % articleSchemaNavList.length;
+    openSchemaViewer(articleSchemaNavList[articleSchemaNavIndex], articleSchemaNavArticleId);
+  } else if(schemaBrowseNavList.length > 1) {
+    schemaBrowseNavIndex = (schemaBrowseNavIndex + direction + schemaBrowseNavList.length) % schemaBrowseNavList.length;
+    openSchemaViewer(schemaBrowseNavList[schemaBrowseNavIndex]);
+  }
 }
 
 function renderArticleMovements(articleId) {
@@ -7603,15 +7645,22 @@ function renderSchemasPage() {
   const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
   const isStaff = currentUser && (currentUser.role === 'admin' || currentUser.role === 'magasinier');
 
-  // La recherche matche l'organe, le titre du schéma, OU le nom/SAP/mots-clés
-  // d'une des pièces qui y sont reliées — pratique pour retrouver "sur quel
-  // schéma est cette pièce" sans connaître le titre du schéma lui-même.
+  // La recherche matche l'organe, le titre du schéma, le chemin catalogue
+  // fournisseur (ex: "21-15-42"), OU le nom/SAP/mots-clés d'une des pièces
+  // qui y sont reliées — pratique pour retrouver "sur quel schéma est cette
+  // pièce" sans connaître le titre du schéma lui-même. Passe par
+  // matchesSearchTerms (comme le catalogue) plutôt qu'un simple .includes()
+  // du texte tel quel : plusieurs mots tapés dans un ordre différent de
+  // celui du titre doivent quand même matcher (ex: "roue moyeu" doit
+  // retrouver "MOYEU DE ROUE").
   function schemaMatchesQuery(s, organe) {
-    if(organe.toLowerCase().includes(q) || s.titre.toLowerCase().includes(q)) return true;
+    const text = (organe + ' ' + s.titre + ' ' + (s.cheminCatalogue||'')).toLowerCase();
+    if(matchesSearchTerms(text, q)) return true;
     return (s.hotspots || []).some(h => {
       if(!h.articleId) return false;
       const a = DB.articles.find(x => x.id === h.articleId);
-      return a && (a.desc.toLowerCase().includes(q) || a.sap.includes(q) || (a.keywords||'').toLowerCase().includes(q));
+      if(!a) return false;
+      return matchesSearchTerms((a.desc+' '+a.sap+' '+(a.keywords||'')).toLowerCase(), q);
     });
   }
 
@@ -7635,17 +7684,33 @@ function renderSchemasPage() {
   }
 
   if(!orderedKeys.length) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Aucun schéma ne correspond${q ? ` à "${escapeHtml(q)}"` : ' à cette sélection'}</p></div>`;
+    let suggestionsHtml = '';
+    if(q) {
+      const suggestions = getFuzzySuggestions(q);
+      if(suggestions.length) {
+        suggestionsHtml = `
+          <div style="margin-top:14px">
+            <p style="font-size:13px;color:var(--text2);margin-bottom:8px">Vouliez-vous dire :</p>
+            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+              ${suggestions.map(sg => `<button class="btn btn-outline btn-sm" onclick="useSchemaFuzzySuggestion('${sg.word.replace(/'/g,"\\'")}')">${escapeHtml(sg.word)} <span style="color:var(--text3);font-weight:400">(${sg.count})</span></button>`).join('')}
+            </div>
+          </div>`;
+      }
+    }
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Aucun schéma ne correspond${q ? ` à "${escapeHtml(q)}"` : ' à cette sélection'}</p>${suggestionsHtml}</div>`;
     updateSchemasCountBadge(0);
+    schemaBrowseNavList = [];
     return;
   }
 
   let visibleCount = 0;
+  schemaBrowseNavList = [];
   container.innerHTML = orderedKeys.map(organe => {
     const items = q
       ? byOrgane[organe].filter(s => schemaMatchesQuery(s, organe))
       : byOrgane[organe];
     visibleCount += items.length;
+    items.forEach(s => schemaBrowseNavList.push(s.id));
     return `
     <div style="margin-bottom:22px">
       <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px">
