@@ -4624,15 +4624,24 @@ function normalizeAccents(s) {
   return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
+// La virgule sépare des groupes "OU" (ex: "frein, embrayage" trouve l'un OU
+// l'autre) ; à l'intérieur d'un groupe, les mots restent liés par "ET" comme
+// avant (ex: "disque frein" exige les deux). Pratique quand on n'est pas
+// sûr du terme exact utilisé sur la fiche, sans perdre le comportement
+// "tous les mots" déjà en place pour une recherche à un seul groupe.
 function matchesSearchTerms(text, query) {
   const normText = normalizeAccents(text);
-  let terms = query.split(/[,\s]+/).map(t => normalizeAccents(t.trim().toLowerCase())).filter(Boolean);
-  const meaningful = terms.filter(t => !FRENCH_STOPWORDS.has(t));
-  // Si TOUT était des mots de liaison (cas limite improbable, ex: recherche
-  // "de"), on les garde plutôt que de tout faire matcher par erreur.
-  if(meaningful.length) terms = meaningful;
-  if(!terms.length) return true;
-  return terms.every(term => normText.includes(term));
+  const groups = query.split(',').map(g => g.trim()).filter(Boolean);
+  if(!groups.length) return true;
+  return groups.some(group => {
+    let terms = group.split(/\s+/).map(t => normalizeAccents(t.trim().toLowerCase())).filter(Boolean);
+    const meaningful = terms.filter(t => !FRENCH_STOPWORDS.has(t));
+    // Si TOUT était des mots de liaison (cas limite improbable, ex: recherche
+    // "de"), on les garde plutôt que de tout faire matcher par erreur.
+    if(meaningful.length) terms = meaningful;
+    if(!terms.length) return false;
+    return terms.every(term => normText.includes(term));
+  });
 }
 
 // Rotation d'une pièce = quantité totale sortie sur TOUT l'historique des
