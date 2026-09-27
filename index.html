@@ -1090,7 +1090,7 @@
           <div class="admin-section-header">📍 Renseigner les emplacements manquants</div>
           <div class="admin-section-body">
             <p style="font-size:13px;color:var(--text2);margin-bottom:14px">
-              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Emplacement</strong> — pour renseigner le champ emplacement des pièces qui n'en ont <u>actuellement aucun</u>. Une pièce qui a déjà un emplacement renseigné n'est jamais modifiée, précis ou non.
+              Importe un fichier avec 2 colonnes — <strong>SAP</strong> et <strong>Emplacement</strong> — pour renseigner le champ emplacement des pièces qui n'en ont <u>actuellement aucun</u>, ou qui ont pour l'instant le repère générique <strong>"VANAS"</strong> (pièce dans le système de stockage automatisé, position précise pas encore connue) — remplacé alors par la position exacte (ex: <code>001.028.425.001.003</code>). Une pièce qui a déjà un <u>autre</u> emplacement renseigné n'est jamais modifiée.
             </p>
             <input type="file" id="emplacement-fix-input" accept=".xlsx,.csv" style="display:none" onchange="startEmplacementFixImport(this.files[0])">
             <button class="btn btn-outline" onclick="document.getElementById('emplacement-fix-input').click()">📍 Importer le fichier d'emplacements</button>
@@ -8453,7 +8453,7 @@ function processEmplacementFix(csvText) {
     return;
   }
 
-  let updated = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
+  let filled = 0, replaced = 0, notFoundInCatalogue = 0, alreadyFilled = 0, emptyRows = 0;
   const touchedIds = [];
 
   for(let i = 1; i < lines.length; i++) {
@@ -8464,16 +8464,30 @@ function processEmplacementFix(csvText) {
     const sap = sapRaw.replace(/[^0-9]/g, '').slice(0, 8);
     const article = DB.articles.find(a => a.sap === sap);
     if(!article) { notFoundInCatalogue++; continue; }
-    if(article.emplacement && article.emplacement.trim()) { alreadyFilled++; continue; }
-    addLog(`✅ SAP ${sap} — emplacement renseigné : "${empRaw}"`, 'var(--primary)');
+    const currentEmp = (article.emplacement || '').trim();
+    // "VANAS" est le repère générique posé pour toute pièce placée dans le
+    // système de stockage automatisé du même nom, en attendant de connaître
+    // sa position précise (ex: 001.028.425.001.003) — ce repère générique
+    // DOIT être remplacé par la position exacte dès qu'elle est connue,
+    // contrairement à un emplacement classique déjà renseigné (rayon,
+    // comptoir...) qu'on ne touche jamais pour ne pas écraser une info fiable.
+    const isVanasPlaceholder = currentEmp.toUpperCase() === 'VANAS';
+    if(currentEmp && !isVanasPlaceholder) { alreadyFilled++; continue; }
+    if(isVanasPlaceholder) {
+      addLog(`🔁 SAP ${sap} — emplacement "VANAS" remplacé par la position précise : "${empRaw}"`, 'var(--amber-dark)');
+      replaced++;
+    } else {
+      addLog(`✅ SAP ${sap} — emplacement renseigné : "${empRaw}"`, 'var(--primary)');
+      filled++;
+    }
     article.emplacement = empRaw;
-    updated++;
     touchedIds.push(article.id);
   }
 
-  text.textContent = `Terminé : ${updated} emplacement(s) renseigné(s), ${alreadyFilled} déjà renseigné(s) (non touché(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
+  const updated = filled + replaced;
+  text.textContent = `Terminé : ${filled} emplacement(s) renseigné(s), ${replaced} position(s) VANAS précisée(s), ${alreadyFilled} déjà renseigné(s) (non touché(s)), ${notFoundInCatalogue} SAP introuvable(s), ${emptyRows} ligne(s) vide(s).`;
   addLog('—————————————————', 'var(--text3)');
-  addLog(`Résumé : ${updated} mise(s) à jour · ${alreadyFilled} déjà renseigné(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
+  addLog(`Résumé : ${filled} renseigné(s) · ${replaced} précisé(s) (VANAS → position) · ${alreadyFilled} déjà renseigné(s) · ${notFoundInCatalogue} SAP non trouvé(s) · ${emptyRows} ligne(s) vide(s)`, 'var(--text)');
 
   if(updated > 0) {
     markArticlesDirty(touchedIds);
