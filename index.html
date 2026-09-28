@@ -590,6 +590,9 @@
         <span class="icon">📐</span> Schémas
         <span class="nav-badge" id="schemas-count-badge" style="background:var(--border);color:var(--text2)">0</span>
       </div>
+      <div class="nav-item" onclick="navGo('localisation')" id="nav-localisation" style="display:none">
+        <span class="icon">🗺️</span> Localisation
+      </div>
       <div class="nav-item" onclick="navGo('catalog')" id="nav-catalog" style="display:none">
         <span class="icon">🔧</span> Catalogue pièces
         <span class="nav-badge" id="catalog-count-badge" style="background:var(--border);color:var(--text2)">0</span>
@@ -782,6 +785,52 @@
           <button class="btn btn-primary staff-only" onclick="openSchemaEditorFromSchemasPage()">📐 Ajouter un schéma</button>
         </div>
         <div id="schemas-page-list"></div>
+      </div>
+
+      <!-- LOCALISATION — recherche/navigation par emplacement physique.
+           Deux formats connus : VANAS (système de stockage automatisé,
+           format vanas.tiroir.longueur.constante.largeur) et Rayon (codes
+           "D<zone><rayon><étagère><emplacement>[<sous>]", voir
+           parseEmplacement). Tout le reste (texte libre : COMPTOIR,
+           VESTIAIRE, codes irréguliers...) atterrit dans l'onglet "Autres". -->
+      <div class="view" id="view-localisation">
+        <div class="tabs" style="display:flex;gap:4px;background:var(--surface2);padding:3px;border-radius:20px;width:fit-content;margin-bottom:16px">
+          <button class="loc-tab-btn active" data-tab="vanas" onclick="switchLocalisationTab('vanas')" style="padding:7px 16px;border-radius:18px;border:none;background:var(--navy);color:#fff;font-weight:600;font-size:12.5px;cursor:pointer">📦 VANAS</button>
+          <button class="loc-tab-btn" data-tab="rayon" onclick="switchLocalisationTab('rayon')" style="padding:7px 16px;border-radius:18px;border:none;background:transparent;color:var(--text2);font-weight:600;font-size:12.5px;cursor:pointer">🗄️ Rayons</button>
+          <button class="loc-tab-btn" data-tab="autre" onclick="switchLocalisationTab('autre')" style="padding:7px 16px;border-radius:18px;border:none;background:transparent;color:var(--text2);font-weight:600;font-size:12.5px;cursor:pointer">📍 Autres</button>
+        </div>
+
+        <div id="loc-panel-vanas">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+            <select id="loc-vanas-select" onchange="onLocVanasChange()" style="padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface)">
+              <option value="">Choisir VANAS...</option>
+            </select>
+            <select id="loc-tiroir-select" onchange="renderLocalisationResults()" disabled style="padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface)">
+              <option value="">Choisir un tiroir...</option>
+            </select>
+          </div>
+          <div id="loc-vanas-results"></div>
+        </div>
+
+        <div id="loc-panel-rayon" style="display:none">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+            <select id="loc-zone-select" onchange="onLocZoneChange()" style="padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface)">
+              <option value="">Choisir une zone...</option>
+            </select>
+            <select id="loc-rayon-select" onchange="onLocRayonChange()" disabled style="padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface)">
+              <option value="">Choisir un rayon...</option>
+            </select>
+            <select id="loc-etagere-select" onchange="renderLocalisationResults()" disabled style="padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface)">
+              <option value="">Toutes les étagères</option>
+            </select>
+          </div>
+          <div id="loc-rayon-results"></div>
+        </div>
+
+        <div id="loc-panel-autre" style="display:none">
+          <input type="text" id="loc-autre-search" placeholder="🔍 Filtrer les autres emplacements..." oninput="renderLocalisationResults()" style="width:100%;max-width:340px;margin-bottom:16px;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--radius);font-size:13px;background:var(--surface);box-sizing:border-box">
+          <div id="loc-autre-results"></div>
+        </div>
       </div>
 
       <!-- CATALOG -->
@@ -3711,6 +3760,8 @@ function applyRoleVisibility() {
   // comptes existants pour qu'ils la voient).
   const navSchemas = document.getElementById('nav-schemas');
   if(navSchemas) navSchemas.style.display = hasPerm('catalog') ? '' : 'none';
+  const navLocalisation = document.getElementById('nav-localisation');
+  if(navLocalisation) navLocalisation.style.display = hasPerm('catalog') ? '' : 'none';
   // Magasinier section label
   const magSection = document.getElementById('nav-section-mag');
   if(magSection) magSection.style.display = (hasPerm('orders') || hasPerm('deliveries') || hasPerm('loansmgr') || hasPerm('journal')) ? '' : 'none';
@@ -3843,13 +3894,14 @@ function showView(name) {
     kits:'Kits de maintenance', tools:'Outillage', myloans:'Mes prêts outillage', loansmgr:'Gestion prêts outillage',
     orders:'Commandes à traiter', deliveries:'Prêt à livrer', journal:'Journal de préparation',
     notifications:'Notifications', messages:'Messagerie', profile:'Mon profil', admin:'Administration', settings:'Paramètres',
-    schemas:'📐 Schémas'
+    schemas:'📐 Schémas', localisation:'🗺️ Localisation'
   };
   document.getElementById('page-title').textContent = titles[name] || name;
   updateBottomNavActive(name);
   closeMobileMenu();
   if(name === 'catalog') renderCatalog();
   if(name === 'schemas') renderSchemasPage();
+  if(name === 'localisation') renderLocalisationPage();
   if(name === 'kits') renderKits();
   if(name === 'tools') renderTools();
   if(name === 'myloans') renderMyLoans();
@@ -7750,6 +7802,229 @@ function renderSchemasPage() {
 function updateSchemasCountBadge(count) {
   const badge = document.getElementById('schemas-count-badge');
   if(badge) { badge.textContent = count; badge.style.display = count ? '' : 'none'; }
+}
+
+// =============================
+// LOCALISATION — navigation par emplacement physique (VANAS + rayons)
+// =============================
+// Découpe un emplacement brut en structure exploitable. Deux formats
+// reconnus (décidé avec l'utilisateur le 28/09/2026) :
+// - VANAS : "X.TTT.LLL.CCC.WWW" → X = numéro de VANAS (1 ou 2), TTT = tiroir,
+//   LLL = position en longueur, CCC = toujours "001", WWW = position en
+//   largeur.
+// - Rayon : "D<zone 1 ch.><rayon 2 ch.><étagère 2 ch.><emplacement 2 ch.>
+//   [<sous 2 ch.>]" — le dernier groupe de 2 chiffres est absent sur une
+//   partie des données existantes ; on le remplace alors par "00" pour
+//   garder une structure régulière.
+// Tout ce qui ne correspond à aucun des deux (texte libre "COMPTOIR",
+// codes irréguliers hérités type "D104RAK"...) tombe dans le type "autre".
+function parseEmplacement(raw) {
+  const e = (raw || '').trim();
+  if(!e) return { type: 'none', raw: e };
+  const vanasMatch = e.match(/^([12])\.(\d{3})\.(\d{3})\.(\d{3})\.(\d{3})$/);
+  if(vanasMatch) {
+    return { type: 'vanas', raw: e, vanas: vanasMatch[1], tiroir: vanasMatch[2], longueur: vanasMatch[3], largeur: vanasMatch[5] };
+  }
+  const rayonMatch = e.match(/^D(\d)(\d{2})(\d{2})(\d{2})(\d{2})?$/);
+  if(rayonMatch) {
+    return { type: 'rayon', raw: e, zone: 'D'+rayonMatch[1], rayon: rayonMatch[2], etagere: rayonMatch[3], emplacement: rayonMatch[4], sous: rayonMatch[5] || '00' };
+  }
+  return { type: 'autre', raw: e };
+}
+
+// Regroupe toutes les pièces par emplacement parsé — recalculé à chaque
+// ouverture de la page (quelques milliers de pièces, instantané), pas de
+// cache à invalider.
+function buildLocalisationIndex() {
+  const vanas = {}, rayon = {}, autre = {};
+  (DB.articles || []).forEach(a => {
+    const p = parseEmplacement(a.emplacement);
+    if(p.type === 'vanas') {
+      (vanas[p.vanas] = vanas[p.vanas] || {});
+      (vanas[p.vanas][p.tiroir] = vanas[p.vanas][p.tiroir] || []).push(a);
+    } else if(p.type === 'rayon') {
+      (rayon[p.zone] = rayon[p.zone] || {});
+      (rayon[p.zone][p.rayon] = rayon[p.zone][p.rayon] || {});
+      (rayon[p.zone][p.rayon][p.etagere] = rayon[p.zone][p.rayon][p.etagere] || []).push(a);
+    } else if(p.type === 'autre') {
+      (autre[p.raw] = autre[p.raw] || []).push(a);
+    }
+  });
+  return { vanas, rayon, autre };
+}
+
+let localisationIndex = null;
+let localisationTab = 'vanas';
+
+function renderLocalisationPage() {
+  localisationIndex = buildLocalisationIndex();
+  populateLocVanasSelect();
+  populateLocZoneSelect();
+  switchLocalisationTab(localisationTab);
+}
+
+function switchLocalisationTab(tab) {
+  localisationTab = tab;
+  document.querySelectorAll('.loc-tab-btn').forEach(btn => {
+    const active = btn.dataset.tab === tab;
+    btn.style.background = active ? 'var(--navy)' : 'transparent';
+    btn.style.color = active ? '#fff' : 'var(--text2)';
+  });
+  document.getElementById('loc-panel-vanas').style.display = tab === 'vanas' ? '' : 'none';
+  document.getElementById('loc-panel-rayon').style.display = tab === 'rayon' ? '' : 'none';
+  document.getElementById('loc-panel-autre').style.display = tab === 'autre' ? '' : 'none';
+  renderLocalisationResults();
+}
+
+function populateLocVanasSelect() {
+  const select = document.getElementById('loc-vanas-select');
+  const current = select.value;
+  const numbers = Object.keys(localisationIndex.vanas).sort();
+  select.innerHTML = '<option value="">Choisir VANAS...</option>' + numbers.map(v => {
+    const count = Object.values(localisationIndex.vanas[v]).reduce((s,arr)=>s+arr.length,0);
+    return `<option value="${v}">VANAS ${escapeHtml(v)} (${count} pièce(s))</option>`;
+  }).join('');
+  if(numbers.includes(current)) select.value = current;
+  onLocVanasChange();
+}
+
+function onLocVanasChange() {
+  const vanas = document.getElementById('loc-vanas-select').value;
+  const tiroirSelect = document.getElementById('loc-tiroir-select');
+  const current = tiroirSelect.value;
+  if(!vanas || !localisationIndex.vanas[vanas]) {
+    tiroirSelect.innerHTML = '<option value="">Choisir un tiroir...</option>';
+    tiroirSelect.disabled = true;
+  } else {
+    const tiroirs = Object.keys(localisationIndex.vanas[vanas]).sort((a,b) => Number(a)-Number(b));
+    tiroirSelect.innerHTML = '<option value="">Choisir un tiroir...</option>' +
+      tiroirs.map(t => `<option value="${t}">Tiroir ${Number(t)} (${localisationIndex.vanas[vanas][t].length} pièce(s))</option>`).join('');
+    tiroirSelect.disabled = false;
+    if(tiroirs.includes(current)) tiroirSelect.value = current;
+  }
+  renderLocalisationResults();
+}
+
+function populateLocZoneSelect() {
+  const select = document.getElementById('loc-zone-select');
+  const current = select.value;
+  const zones = Object.keys(localisationIndex.rayon).sort();
+  select.innerHTML = '<option value="">Choisir une zone...</option>' + zones.map(z => {
+    const count = Object.values(localisationIndex.rayon[z]).reduce((s,rayons)=>s+Object.values(rayons).reduce((s2,arr)=>s2+arr.length,0),0);
+    return `<option value="${z}">${escapeHtml(z)} (${count} pièce(s))</option>`;
+  }).join('');
+  if(zones.includes(current)) select.value = current;
+  onLocZoneChange();
+}
+
+function onLocZoneChange() {
+  const zone = document.getElementById('loc-zone-select').value;
+  const rayonSelect = document.getElementById('loc-rayon-select');
+  const current = rayonSelect.value;
+  if(!zone || !localisationIndex.rayon[zone]) {
+    rayonSelect.innerHTML = '<option value="">Choisir un rayon...</option>';
+    rayonSelect.disabled = true;
+  } else {
+    const rayons = Object.keys(localisationIndex.rayon[zone]).sort();
+    rayonSelect.innerHTML = '<option value="">Choisir un rayon...</option>' + rayons.map(r => {
+      const count = Object.values(localisationIndex.rayon[zone][r]).reduce((s,arr)=>s+arr.length,0);
+      return `<option value="${r}">Rayon ${escapeHtml(r)} (${count} pièce(s))</option>`;
+    }).join('');
+    rayonSelect.disabled = false;
+    if(rayons.includes(current)) rayonSelect.value = current;
+  }
+  onLocRayonChange();
+}
+
+function onLocRayonChange() {
+  const zone = document.getElementById('loc-zone-select').value;
+  const rayon = document.getElementById('loc-rayon-select').value;
+  const etagereSelect = document.getElementById('loc-etagere-select');
+  const current = etagereSelect.value;
+  if(!zone || !rayon || !localisationIndex.rayon[zone] || !localisationIndex.rayon[zone][rayon]) {
+    etagereSelect.innerHTML = '<option value="">Toutes les étagères</option>';
+    etagereSelect.disabled = true;
+  } else {
+    const etageres = Object.keys(localisationIndex.rayon[zone][rayon]).sort();
+    etagereSelect.innerHTML = '<option value="">Toutes les étagères</option>' +
+      etageres.map(e => `<option value="${e}">Étagère ${escapeHtml(e)} (${localisationIndex.rayon[zone][rayon][e].length} pièce(s))</option>`).join('');
+    etagereSelect.disabled = false;
+    if(etageres.includes(current)) etagereSelect.value = current;
+  }
+  renderLocalisationResults();
+}
+
+function renderLocalisationArticleGrid(containerId, arts, emptyMsg) {
+  const container = document.getElementById(containerId);
+  if(!arts.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">📍</div><p>${emptyMsg}</p></div>`;
+    return;
+  }
+  container.innerHTML = `
+    <p style="font-size:12.5px;color:var(--text3);margin-bottom:10px">${arts.length} pièce(s)</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">
+      ${arts.map(a => `
+        <div class="article-card" onclick="openArticleDetail('${a.id}')">
+          <div class="article-img">${a.photo ? `<img src="${articlePhotoUrl(a,'w_300')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}</div>
+          <div class="article-body">
+            <div class="article-ref">${escapeHtml(a.sap)}</div>
+            <div class="article-name">${escapeHtml(a.desc)}</div>
+            <div class="article-footer"><div class="article-location">📍 ${escapeHtml(a.emplacement||'')}</div></div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderLocalisationResults() {
+  if(!localisationIndex) return;
+  if(localisationTab === 'vanas') {
+    const vanas = document.getElementById('loc-vanas-select').value;
+    const tiroir = document.getElementById('loc-tiroir-select').value;
+    const arts = (vanas && tiroir && localisationIndex.vanas[vanas] && localisationIndex.vanas[vanas][tiroir]) || [];
+    // Trié par position (longueur puis largeur) pour retrouver l'ordre
+    // physique réel dans le tiroir plutôt qu'un ordre arbitraire.
+    const sorted = [...arts].sort((a,b) => {
+      const pa = parseEmplacement(a.emplacement), pb = parseEmplacement(b.emplacement);
+      return (pa.longueur+pa.largeur).localeCompare(pb.longueur+pb.largeur);
+    });
+    renderLocalisationArticleGrid('loc-vanas-results', sorted, 'Choisis un VANAS puis un tiroir pour voir les pièces.');
+  } else if(localisationTab === 'rayon') {
+    const zone = document.getElementById('loc-zone-select').value;
+    const rayon = document.getElementById('loc-rayon-select').value;
+    const etagere = document.getElementById('loc-etagere-select').value;
+    let arts = [];
+    if(zone && rayon && localisationIndex.rayon[zone] && localisationIndex.rayon[zone][rayon]) {
+      arts = etagere
+        ? (localisationIndex.rayon[zone][rayon][etagere] || [])
+        : Object.values(localisationIndex.rayon[zone][rayon]).flat();
+    }
+    renderLocalisationArticleGrid('loc-rayon-results', arts, 'Choisis une zone puis un rayon pour voir les pièces.');
+  } else if(localisationTab === 'autre') {
+    const qRaw = (document.getElementById('loc-autre-search').value || '').trim().toLowerCase();
+    const q = normalizeAccents(qRaw);
+    const keys = Object.keys(localisationIndex.autre)
+      .filter(k => !q || normalizeAccents(k.toLowerCase()).includes(q))
+      .sort();
+    const container = document.getElementById('loc-autre-results');
+    if(!keys.length) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-icon">📍</div><p>Aucun emplacement ne correspond.</p></div>`;
+      return;
+    }
+    container.innerHTML = keys.map(k => `
+      <div style="margin-bottom:22px">
+        <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px">📍 ${escapeHtml(k)} <span style="font-weight:400;color:var(--text3)">(${localisationIndex.autre[k].length})</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">
+          ${localisationIndex.autre[k].map(a => `
+            <div class="article-card" onclick="openArticleDetail('${a.id}')">
+              <div class="article-img">${a.photo ? `<img src="${articlePhotoUrl(a,'w_300')}" alt="${escapeHtml(a.desc)}" loading="lazy">` : '⚙️'}</div>
+              <div class="article-body">
+                <div class="article-ref">${escapeHtml(a.sap)}</div>
+                <div class="article-name">${escapeHtml(a.desc)}</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`).join('');
+  }
 }
 
 function renderAdminSchemaList() {
