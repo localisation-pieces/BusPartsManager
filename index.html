@@ -5718,25 +5718,41 @@ function articlePhotoUrl(a, transform) {
   return cloudinaryOptimized(a.photo, t);
 }
 
+// Envois SIGNÉS : avant chaque envoi, l'appli demande une signature à un petit
+// service Cloudflare (bpm-sign) qui vérifie que l'utilisateur est bien connecté
+// (jeton Firebase). La clé secrète Cloudinary reste côté Cloudflare, jamais
+// dans cette page — contrairement à l'ancien envoi "non signé" où n'importe
+// qui, avec le nom du compte et du preset visibles ici, pouvait téléverser.
+const BPM_SIGN_URL = 'https://bpm-sign.mezhas.workers.dev/';
+
 async function uploadPhotoToCloudinary(articleId, blob) {
-  if(CLOUDINARY_CLOUD_NAME === 'À_REMPLACER' || CLOUDINARY_UPLOAD_PRESET === 'À_REMPLACER') {
-    throw new Error("Cloudinary n'est pas encore configuré (CLOUDINARY_CLOUD_NAME / CLOUDINARY_UPLOAD_PRESET en haut du fichier).");
+  const user = window.fbAuth && window.fbAuth.currentUser;
+  if(!user) throw new Error("Connexion requise pour envoyer une photo. Reconnectez-vous puis réessayez.");
+
+  const idToken = await user.getIdToken();
+  const signRes = await fetch(BPM_SIGN_URL, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + idToken }
+  });
+  if(!signRes.ok) {
+    const errText = await signRes.text().catch(() => '');
+    throw new Error(`Signature d'envoi refusée (code ${signRes.status}). ${errText}`);
   }
+  const sig = await signRes.json();
+
   const formData = new FormData();
   formData.append('file', blob);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  formData.append('api_key', sig.api_key);
+  formData.append('timestamp', sig.timestamp);
+  formData.append('signature', sig.signature);
   // Chaque nouvelle photo obtient une adresse UNIQUE générée par Cloudinary
   // (rangée dans le dossier "articles"), plutôt qu'une adresse fixe basée sur
-  // l'identifiant de la pièce. Nécessaire car les envois "non signés" (le
-  // seul mode compatible avec une appli 100% côté navigateur, sans clé
-  // secrète exposée) interdisent l'écrasement pour des raisons de sécurité —
-  // avec une adresse fixe, remplacer une photo ne faisait donc jamais rien
-  // de visible : Cloudinary renvoyait simplement l'ancienne image existante.
-  // L'ancienne photo reste inutilisée dans la médiathèque (sans gêner ni
-  // coûter cher vu l'espace disponible), mais la nouvelle s'affiche bien.
-  formData.append('folder', 'articles');
+  // l'identifiant de la pièce : remplacer une photo crée donc une nouvelle
+  // image et la nouvelle s'affiche immédiatement. L'ancienne reste inutilisée
+  // dans la médiathèque (sans gêner ni coûter cher vu l'espace disponible).
+  formData.append('folder', sig.folder);
 
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${sig.cloud_name}/image/upload`, {
     method: 'POST',
     body: formData
   });
