@@ -2606,10 +2606,42 @@
         return false;
       }
       await updateDoc(AUTH_DOC, { users });
+      window.fbSyncRoles(users);
       return true;
     } catch (e) {
       console.warn('Sauvegarde des utilisateurs (partielle) échouée :', e);
       return false;
+    }
+  };
+
+  // Miroir bpm_roles/{uid} = { role, active } : c'est CE document que les
+  // règles de sécurité Firestore consultent pour savoir si un compte est un
+  // membre validé (et s'il est admin). Sans fiche active ici, un compte
+  // Firebase — même créé par un inconnu — n'a accès à aucune donnée.
+  // Écrit uniquement par un admin (les règles refusent les autres). Appelé
+  // après chaque sauvegarde des comptes, et à la connexion d'un admin pour
+  // rattraper tout décalage. Meilleur effort : n'empêche jamais l'action
+  // principale en cas d'échec.
+  const rolesMirrorCache = {};
+  window.fbSyncRoles = async function(users) {
+    try {
+      const batch = writeBatch(fsdb);
+      const done = [];
+      (users || []).forEach(u => {
+        if (!u || !u.id) return;
+        const role = ['admin', 'magasinier', 'agent'].includes(u.role) ? u.role : 'agent';
+        const active = u.active === true && u.statut === 'actif';
+        const key = role + '|' + active;
+        if (rolesMirrorCache[u.id] === key) return;
+        batch.set(doc(fsdb, 'bpm_roles', u.id), { role, active, updatedAt: serverTimestamp() });
+        done.push([u.id, key]);
+      });
+      if (!done.length) return;
+      // Un lot Firestore est limité à 500 opérations : largement suffisant ici.
+      await batch.commit();
+      done.forEach(([id, key]) => { rolesMirrorCache[id] = key; });
+    } catch (e) {
+      console.warn('Synchronisation des rôles (bpm_roles) non effectuée :', e);
     }
   };
 
@@ -2629,6 +2661,9 @@
         const filtered = users.filter(u => u.id !== userId);
         tx.update(AUTH_DOC, { users: filtered });
       });
+      // Retire aussi sa fiche de rôle : un compte supprimé ne doit plus rien
+      // pouvoir lire (voir fbSyncRoles). Meilleur effort.
+      try { await deleteDoc(doc(fsdb, 'bpm_roles', userId)); } catch (e) { console.warn('Fiche de rôle non supprimée :', e); }
       return true;
     } catch (e) {
       console.warn('Suppression du compte échouée :', e);
@@ -3093,6 +3128,9 @@ window.applyRemoteAuthData = function(data, fromCache) {
   } finally {
     applyingRemote = false;
   }
+  // Rattrape les fiches de rôle (bpm_roles) à la connexion d'un admin : sans
+  // effet si tout est déjà à jour (voir fbSyncRoles).
+  if (currentUser && currentUser.role === 'admin' && window.fbSyncRoles && !fromCache) window.fbSyncRoles(DB.users);
   if (typeof migratePasswordsIfNeeded === 'function') migratePasswordsIfNeeded();
   // Rafraîchit l'écran si l'admin est déjà en train de regarder la page
   // Administration au moment où une nouvelle demande arrive en direct —
