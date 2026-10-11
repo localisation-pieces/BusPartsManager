@@ -2294,8 +2294,33 @@
   // Chargement NON-bloquant du petit document d'authentification seulement :
   // rien d'autre ne doit empêcher l'affichage de l'écran de connexion, et la
   // base complète n'est pas demandée à ce stade.
+  // Avant connexion, on ne lit PLUS bpm/auth (liste des comptes : réservée aux
+  // membres validés). L'écran de connexion n'a besoin que du petit document
+  // public bpm_public/config (liste des magasins pour l'inscription).
+  const PUBLIC_DOC = doc(fsdb, 'bpm_public', 'config');
   function startAuthSync() {
-    onSnapshot(AUTH_DOC, async (snap) => {
+    getDoc(PUBLIC_DOC).then((snap) => {
+      if (bootTimedOut) {
+        bootTimedOut = false;
+        document.getElementById('fb-boot-error').style.display = 'none';
+        document.getElementById('fb-boot-screen').style.display = 'flex';
+        document.getElementById('fb-boot-text').style.display = 'block';
+      }
+      clearTimeout(bootTimer);
+      if (snap.exists() && snap.data().settings && window.applyPublicConfig) window.applyPublicConfig(snap.data().settings);
+      showAuthScreenNow();
+    }).catch((err) => {
+      clearTimeout(bootTimer);
+      bootError('Erreur Firestore : ' + (err && err.message ? err.message : 'connexion refusée.'));
+    });
+  }
+
+  // Écoute en direct de bpm/auth (liste des comptes) — démarrée UNIQUEMENT
+  // après une connexion réussie d'un membre validé (voir doLogin/tryAutoLogin).
+  let authDocUnsub = null;
+  window.startAuthDocSync = function() {
+    if (authDocUnsub) return;
+    authDocUnsub = onSnapshot(AUTH_DOC, async (snap) => {
       if (bootTimedOut) {
         // La connexion a fini par répondre, juste après le délai d'attente —
         // plutôt que d'ignorer cette réponse tardive (ce qui obligeait avant
@@ -2346,10 +2371,44 @@
         showAuthScreenNow();
       }
     }, (err) => {
-      clearTimeout(bootTimer);
-      bootError('Erreur Firestore : ' + (err && err.message ? err.message : 'connexion refusée. Vérifiez les règles de sécurité Firestore.'));
+      console.warn('Synchronisation des comptes (bpm/auth) interrompue :', err);
     });
-  }
+  };
+  window.stopAuthDocSync = function() {
+    if (authDocUnsub) { authDocUnsub(); authDocUnsub = null; }
+  };
+
+  // Lecture unique, directement sur le serveur, de la liste des comptes —
+  // possible seulement pour un membre validé (règles Firestore).
+  window.fbLoadAuthDocOnce = async function() {
+    try {
+      const snap = await getDocFromServer(AUTH_DOC);
+      if (!snap.exists()) return false;
+      authDataFresh = true;
+      window.applyRemoteAuthData(snap.data(), false);
+      return true;
+    } catch (e) {
+      console.warn('Lecture des comptes impossible :', e);
+      return false;
+    }
+  };
+  // Fiche de rôle du compte connecté : null = aucune fiche (inscription en
+  // attente de validation), undefined = erreur de lecture (réseau, etc.).
+  window.fbGetRoleDoc = async function(uid) {
+    try {
+      const s = await getDoc(doc(fsdb, 'bpm_roles', uid));
+      return s.exists() ? s.data() : null;
+    } catch (e) { return undefined; }
+  };
+  // Informations de connexion d'un matricule (lisible avant connexion) :
+  // { real, authEmail? } ou null si ce matricule n'a pas de compte validé.
+  window.fbGetLoginInfo = async function(matricule) {
+    if (!matricule || /[\/.]/.test(matricule)) return null;
+    try {
+      const s = await getDoc(doc(fsdb, 'bpm_login', matricule));
+      return s.exists() ? s.data() : null;
+    } catch (e) { return null; }
+  };
 
   // Démarre le chargement du document complet — appelé UNIQUEMENT après une
   // connexion réussie (voir doLogin/tryAutoLogin dans le script principal).
@@ -2631,9 +2690,17 @@
         if (!u || !u.id) return;
         const role = ['admin', 'magasinier', 'agent'].includes(u.role) ? u.role : 'agent';
         const active = u.active === true && u.statut === 'actif';
-        const key = role + '|' + active;
+        const statut = u.statut || 'actif';
+        const matricule = String(u.matricule || u.login || '');
+        const email = u.authEmail || '';
+        const real = !!email && !email.endsWith('@buspartsmanager.local');
+        const key = [role, active, statut, matricule, real ? email : ''].join('|');
         if (rolesMirrorCache[u.id] === key) return;
-        batch.set(doc(fsdb, 'bpm_roles', u.id), { role, active, updatedAt: serverTimestamp() });
+        batch.set(doc(fsdb, 'bpm_roles', u.id), { role, active, statut, updatedAt: serverTimestamp() });
+        // Un compte non validé (en attente / refusé) n'a pas encore d'entrée de connexion.
+        if (matricule && !/[\/.]/.test(matricule) && statut === 'actif') {
+          batch.set(doc(fsdb, 'bpm_login', matricule), real ? { real: true, authEmail: email } : { real: false });
+        }
         done.push([u.id, key]);
       });
       if (!done.length) return;
@@ -2642,6 +2709,21 @@
       done.forEach(([id, key]) => { rolesMirrorCache[id] = key; });
     } catch (e) {
       console.warn('Synchronisation des rôles (bpm_roles) non effectuée :', e);
+    }
+  };
+
+  // Copie publique de ce dont l'écran d'inscription a besoin (liste des
+  // magasins). Écrite par un admin quand les réglages changent.
+  let publicConfigCache = '';
+  window.fbSyncPublicConfig = async function(settings) {
+    try {
+      const magasins = (settings && settings.magasins) || [];
+      const json = JSON.stringify(magasins);
+      if (json === publicConfigCache) return;
+      await setDoc(PUBLIC_DOC, { settings: { magasins } });
+      publicConfigCache = json;
+    } catch (e) {
+      console.warn('Synchronisation de la config publique non effectuée :', e);
     }
   };
 
@@ -2654,16 +2736,22 @@
   // compte depuis un autre appareil (le filtre ne fait rien si déjà absent).
   window.fbDeleteUserById = async function(userId) {
     try {
+      let deletedMatricule = '';
       await runTransaction(fsdb, async (tx) => {
         const snap = await tx.get(AUTH_DOC);
         if (!snap.exists()) throw new Error('AUTH_DOC_MISSING');
         const users = snap.data().users || [];
+        const target = users.find(u => u.id === userId);
+        deletedMatricule = target ? String(target.matricule || target.login || '') : '';
         const filtered = users.filter(u => u.id !== userId);
         tx.update(AUTH_DOC, { users: filtered });
       });
       // Retire aussi sa fiche de rôle : un compte supprimé ne doit plus rien
       // pouvoir lire (voir fbSyncRoles). Meilleur effort.
       try { await deleteDoc(doc(fsdb, 'bpm_roles', userId)); } catch (e) { console.warn('Fiche de rôle non supprimée :', e); }
+      try {
+        if (deletedMatricule && !/[\/.]/.test(deletedMatricule)) await deleteDoc(doc(fsdb, 'bpm_login', deletedMatricule));
+      } catch (e) { console.warn('Entrée de connexion non supprimée :', e); }
       return true;
     } catch (e) {
       console.warn('Suppression du compte échouée :', e);
@@ -3099,6 +3187,14 @@ function maybeSaveAuthProjection() {
 // aux données complètes. Contient les utilisateurs (avec mot de passe haché,
 // jamais en clair) et les réglages généraux nécessaires à l'écran de
 // connexion/inscription (liste des magasins, marques...).
+// Config publique lue AVANT connexion (bpm_public/config) : seulement ce que
+// l'écran d'inscription affiche. N'écrase jamais les vrais réglages une fois
+// la base complète chargée.
+window.applyPublicConfig = function(settings) {
+  if (!settings || fullDataLoaded) return;
+  if (settings.magasins) DB.settings.magasins = settings.magasins;
+};
+
 window.applyRemoteAuthData = function(data, fromCache) {
   if (!data) return;
   console.log('[DIAG bpm/auth] fromCache=' + fromCache + ' fullDataLoaded=' + fullDataLoaded + ' categories=' + (data.settings && data.settings.categories ? data.settings.categories.length : 'aucun'));
@@ -3219,6 +3315,8 @@ window.applyRemoteData = function(data, fromCache) {
     if(data.settings) {
       DB.settings = data.settings;
       if(!DB.settings.marques) DB.settings.marques = ['Mercedes-Benz','Iveco','Solaris','Volvo','MAN','Scania','VDL','Heuliez'];
+      // L'admin tient à jour la copie publique (liste des magasins pour l'inscription).
+      if (currentUser && currentUser.role === 'admin' && window.fbSyncPublicConfig && !fromCache) window.fbSyncPublicConfig(DB.settings);
     }
     fullDataLoaded = true;
     if (currentUser) {
@@ -3419,8 +3517,8 @@ async function doForgotPassword() {
     errEl.style.display = 'block';
     return;
   }
-  const user = DB.users.find(u => u.matricule === matricule);
-  if(!user) {
+  const loginInfo = await window.fbGetLoginInfo(matricule);
+  if(!loginInfo) {
     errEl.textContent = `🚫 Aucun compte ne correspond au matricule ${matricule}.`;
     errEl.style.display = 'block';
     return;
@@ -3434,11 +3532,11 @@ async function doForgotPassword() {
   // aucune intervention de l'admin nécessaire. Les anciens comptes créés
   // avant cette fonctionnalité (e-mail fictif matricule@buspartsmanager.local)
   // continuent de passer par une demande manuelle à l'admin.
-  const hasRealEmail = user.authEmail && !user.authEmail.endsWith('@buspartsmanager.local');
+  const hasRealEmail = !!(loginInfo.real && loginInfo.authEmail);
 
   if(hasRealEmail) {
     try {
-      await window.fbSendPasswordResetEmail(window.fbAuth, user.authEmail);
+      await window.fbSendPasswordResetEmail(window.fbAuth, loginInfo.authEmail);
       if(btn) { btn.disabled = false; btn.textContent = 'Envoyer la demande'; }
       document.getElementById('forgot-view').style.display = 'none';
       document.getElementById('forgot-sent-view').style.display = 'block';
@@ -3464,7 +3562,7 @@ async function doForgotPassword() {
         id: 'n' + Date.now(),
         to: 'admin',
         title: '🔑 Mot de passe oublié',
-        msg: `${user.name} (${matricule}) a demandé la réinitialisation de son mot de passe.${message ? ' Message : ' + message : ''} → Ce compte n'a pas d'e-mail personnel enregistré : utilise l'outil admin-tool.js (commande "reset") pour lui définir un nouveau mot de passe, puis communique-le-lui directement.`,
+        msg: `Le matricule ${matricule} a demandé la réinitialisation de son mot de passe.${message ? ' Message : ' + message : ''} → Ce compte n'a pas d'e-mail personnel enregistré : utilise l'outil admin-tool.js (commande "reset") pour lui définir un nouveau mot de passe, puis communique-le-lui directement.`,
         read: false,
         time: Date.now()
       });
@@ -3535,17 +3633,20 @@ function doSignup() {
     errEl.style.display = 'block';
     return;
   }
-  if(DB.users.find(u => u.login === matricule || u.matricule === matricule)) {
-    errEl.textContent = `🚫 Le matricule ${matricule} est déjà associé à un compte existant.`;
-    errEl.style.display = 'block';
-    return;
-  }
-
   doSignupSubmit(prenom, nom, matricule, magasin, role, tel, email, pass, errEl);
 }
 
 async function doSignupSubmit(prenom, nom, matricule, magasin, role, tel, email, pass, errEl) {
   tel = sanitizeInput(tel);
+  // Un matricule qui a déjà un compte validé a une entrée de connexion
+  // publique ; les demandes encore en attente sont couvertes par la
+  // réservation atomique ci-dessous.
+  const already = await window.fbGetLoginInfo(matricule);
+  if (already) {
+    errEl.textContent = `🚫 Le matricule ${matricule} est déjà associé à un compte existant.`;
+    errEl.style.display = 'block';
+    return;
+  }
   const submitBtn = document.querySelector('#signup-view .btn-primary');
   if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Vérification du matricule...'; }
 
@@ -3631,38 +3732,59 @@ async function doLogin() {
   const pass = document.getElementById('login-pass').value.trim();
   const errEl = document.getElementById('login-error');
   const remember = document.getElementById('login-remember');
+  const fail = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
 
-  const user = DB.users.find(u => u.login === login);
-  if(!user) {
-    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-    errEl.style.display = 'block';
-    return;
-  }
+  if(!login || /[\/.]/.test(login)) { fail('Identifiant ou mot de passe incorrect.'); return; }
+
+  // 1. Retrouver l'e-mail de connexion de ce matricule (document public, lu à
+  //    l'unité). Sans entrée : e-mail fictif déductible du matricule.
+  let loginEmail = window.matriculeToEmail(login);
+  const info = await window.fbGetLoginInfo(login);
+  if(info && info.authEmail) loginEmail = info.authEmail;
 
   try {
     await window.fbSetPersistence(window.fbAuth, (remember && remember.checked) ? window.fbBrowserLocalPersistence : window.fbBrowserSessionPersistence);
-    await window.fbSignInWithEmailAndPassword(window.fbAuth, user.authEmail || window.matriculeToEmail(login), pass);
+    await window.fbSignInWithEmailAndPassword(window.fbAuth, loginEmail, pass);
   } catch(e) {
-    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-    errEl.style.display = 'block';
+    fail('Identifiant ou mot de passe incorrect. Si vous venez de vous inscrire, votre demande est peut-être encore en attente de validation.');
     return;
   }
 
-  if(user.statut === 'en_attente') {
-    errEl.textContent = '⏳ Votre compte est en attente de validation par un administrateur.';
-    errEl.style.display = 'block';
+  // 2. Statut du compte : lu dans SA propre fiche de rôle (seule chose lisible
+  //    par un compte pas encore validé). Pas de fiche = demande en attente.
+  const uid = window.fbAuth.currentUser && window.fbAuth.currentUser.uid;
+  const role = uid ? await window.fbGetRoleDoc(uid) : undefined;
+  if(role === undefined) {
+    fail('Connexion impossible pour le moment (réseau ou serveur). Réessayez dans un instant.');
     await window.fbSignOut(window.fbAuth);
     return;
   }
-  if(user.statut === 'refuse') {
-    errEl.textContent = '🚫 Votre demande d\'inscription a été refusée. Contactez un administrateur.';
-    errEl.style.display = 'block';
+  if(!role) {
+    fail('⏳ Votre compte est en attente de validation par un administrateur.');
     await window.fbSignOut(window.fbAuth);
     return;
   }
-  if(!user.active) {
-    errEl.textContent = '🚫 Ce compte est désactivé. Contactez un administrateur.';
-    errEl.style.display = 'block';
+  if(role.statut === 'refuse') {
+    fail('🚫 Votre demande d\'inscription a été refusée. Contactez un administrateur.');
+    await window.fbSignOut(window.fbAuth);
+    return;
+  }
+  if(role.statut === 'en_attente') {
+    fail('⏳ Votre compte est en attente de validation par un administrateur.');
+    await window.fbSignOut(window.fbAuth);
+    return;
+  }
+  if(!role.active) {
+    fail('🚫 Ce compte est désactivé. Contactez un administrateur.');
+    await window.fbSignOut(window.fbAuth);
+    return;
+  }
+
+  // 3. Membre validé : on peut maintenant lire la liste des comptes.
+  const loaded = await window.fbLoadAuthDocOnce();
+  const user = loaded ? DB.users.find(u => u.id === uid) : null;
+  if(!user || user.statut !== 'actif' || !user.active) {
+    fail('Connexion impossible : compte introuvable. Contactez un administrateur.');
     await window.fbSignOut(window.fbAuth);
     return;
   }
@@ -3676,6 +3798,7 @@ async function doLogin() {
   // Ce n'est qu'à partir d'ici, une fois connecté, que le reste de la base
   // (catalogue, commandes, prêts, messages...) est chargé.
   restoreCachedFullDataIfAny();
+  window.startAuthDocSync && window.startAuthDocSync();
   window.startFullDataSync && window.startFullDataSync();
   window.startArticlesSync && window.startArticlesSync();
   window.startSchemasSync && window.startSchemasSync();
@@ -3690,7 +3813,9 @@ function doLogout() {
   // mémoire : un visiteur qui rouvrirait l'app sans se reconnecter ne doit
   // plus y avoir accès (ni au réseau, ni dans les outils de développement).
   window.stopFullDataSync && window.stopFullDataSync();
+  window.stopAuthDocSync && window.stopAuthDocSync();
   window.stopArticlesSync && window.stopArticlesSync();
+  DB.users = [];
   DB.articles = []; DB.orders = []; DB.kits = []; DB.tools = []; DB.loans = []; DB.schemas = [];
   window.stopSchemasSync && window.stopSchemasSync();
   DB.notifications = []; DB.messages = []; DB.activity = []; DB.stockMovements = [];
@@ -3728,18 +3853,23 @@ function doLogout() {
 // à true si un compte a été reconnecté automatiquement.
 window.tryAutoLogin = function() {
   return new Promise((resolve) => {
-    const unsub = window.fbOnAuthStateChanged(window.fbAuth, (fbUser) => {
+    const unsub = window.fbOnAuthStateChanged(window.fbAuth, async (fbUser) => {
       unsub();
       if(!fbUser) { resolve(false); return; }
-      const user = DB.users.find(u => u.id === fbUser.uid);
-      if(!user || user.statut !== 'actif' || !user.active) {
+      const signOutClean = () => {
         window.fbSignOut(window.fbAuth);
         try { localStorage.removeItem('bpm_session'); } catch(e){}
-        resolve(false);
-        return;
-      }
+      };
+      const role = await window.fbGetRoleDoc(fbUser.uid);
+      // Erreur passagère de lecture : on ne déconnecte pas, on affiche juste l'écran de connexion.
+      if(role === undefined) { resolve(false); return; }
+      if(!role || !role.active || role.statut !== 'actif') { signOutClean(); resolve(false); return; }
+      const loaded = await window.fbLoadAuthDocOnce();
+      const user = loaded ? DB.users.find(u => u.id === fbUser.uid) : null;
+      if(!user || user.statut !== 'actif' || !user.active) { signOutClean(); resolve(false); return; }
       currentUser = user;
       restoreCachedFullDataIfAny();
+      window.startAuthDocSync && window.startAuthDocSync();
       window.startFullDataSync && window.startFullDataSync();
       window.startArticlesSync && window.startArticlesSync();
       window.startSchemasSync && window.startSchemasSync();
